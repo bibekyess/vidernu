@@ -1,7 +1,7 @@
 ---
 title: Vidernu — privacy-first local-inference language-learning Chrome extension for YouTube
 date: 2026-07-03
-status: Draft        # Draft | Ratified | Delivered
+status: Ratified        # Draft | Ratified | Delivered
 ---
 
 # 2026-07-03 — Vidernu: privacy-first local-inference language-learning Chrome extension for YouTube
@@ -89,12 +89,16 @@ must honor**; the exact wiring is the planner's lane, not this spec's.
     moment of trigger, the full visible active caption text MUST be treated as the single
     "line" to analyze.
 
-### FR-4 — Analysis trigger UX  *(contains an OPEN QUESTION — see Assumptions)*
+### FR-4 — Analysis trigger UX
 
-14. Vidernu MUST provide an explicit, discoverable way for the user to send the currently-
-    active caption line into the side panel for analysis.
-15. The line captured for analysis MUST be the caption active **at the moment the trigger
-    fires**; the panel MUST display which line text was analyzed so the result is
+14. Vidernu MUST provide the analysis trigger as an **always-visible "Analyze current line"
+    button in the side panel**. Activating the button MUST capture whatever subtitle line is
+    active in the caption DOM at the moment of the click and send it into the panel for
+    analysis. (Because the trigger lives in the panel, the panel must be open to analyze; this
+    is the intended v1 interaction — see Assumptions. A keyboard hotkey and/or click-on-caption
+    trigger are candidate later additions and are out of scope for v1.)
+15. The line captured for analysis MUST be the caption active **at the moment the button is
+    clicked**; the panel MUST display which line text was analyzed so the result is
     unambiguous even after the video advances.
 16. Triggering analysis MUST NOT alter video playback state in v1 (no forced pause/seek) —
     see Assumptions (accepted default; may be revisited).
@@ -107,16 +111,22 @@ must honor**; the exact wiring is the planner's lane, not this spec's.
 18. Vidernu MUST render its UI as a **side panel that resizes YouTube's native content
     wrapper** (a split view), NOT as an overlay floating over the video. The video MUST remain
     fully visible and usable while the panel is open.
-19. The panel MUST present the analysis of a single line in **four distinct sections**:
-    a. **Translation** — the original (native) sentence plus a translation, explicitly
-       distinguishing a **literal** rendering from a **natural/idiomatic** one.
+19. The panel MUST present the analysis of a single line in **four distinct sections**. All
+    explanatory text produced by these sections (the translation, per-token roles/meanings,
+    context notes, and grammar rules) MUST be rendered **in English**, regardless of the
+    source caption language (see FR-8):
+    a. **Translation** — the original (source-language) sentence plus its English translation,
+       explicitly distinguishing a **literal** English rendering from a **natural/idiomatic**
+       English one. The original source-language sentence is shown verbatim; the two
+       translations are in English.
     b. **Deconstruction** — a row-by-row token breakdown that splits complex verbs from their
        suffixes, identifies grammatical particles, and shows root, part-of-speech, and
-       role/meaning per token.
+       role/meaning per token. The token/root are shown in the source language; the
+       part-of-speech and role/meaning are described in English.
     c. **Context & Meaning** — tone, formality/honorifics, and colloquialisms present in the
-       line.
-    d. **Grammar Notes** — textbook-style rule references for the grammatical structures used
-       in the line.
+       line, explained in English.
+    d. **Grammar Notes** — textbook-style rule references (in English) for the grammatical
+       structures used in the line.
 20. While an analysis is in progress, the panel MUST show a clear in-progress/loading
     indication for the requested line.
 21. The panel MUST render partial-but-valid results gracefully: if a section's data is empty
@@ -129,7 +139,9 @@ must honor**; the exact wiring is the planner's lane, not this spec's.
     subtitle text, or derived data may be sent to any external server or third-party API
     (see FR-10).
 23. The model MUST be prompted to return **only** a single JSON object — no markdown code
-    fences, no surrounding prose — conforming to this fixed v1 schema:
+    fences, no surrounding prose — conforming to this fixed v1 schema. All natural-language
+    string values in the object (except the source-language `token`/`root` fields) MUST be
+    in English (see FR-8):
 
     ```
     {
@@ -163,17 +175,27 @@ must honor**; the exact wiring is the planner's lane, not this spec's.
 29. An analysis attempt MUST be bounded by a timeout; exceeding it MUST resolve to the same
     FR-27 error state rather than hanging indefinitely.
 
-### FR-8 — Language scope  *(contains an OPEN QUESTION — see Assumptions)*
+### FR-8 — Language scope
 
-30. Vidernu MUST define, for v1, which **source** (caption) languages it targets and which
-    **output** language it uses for translations and explanations. Pending the decision below,
-    the working default is: **language-agnostic prompting keyed to the active YouTube caption
-    track language**, with Korean and Japanese as the primary validation targets (given the
-    honorifics/particle emphasis), and **English** as the output/explanation language.
-31. Whatever the resolved scope, the four-section breakdown (FR-5) and the JSON contract
-    (FR-6) MUST be produced for at least the primary validated language(s), and behavior for
-    unsupported/untested languages MUST be defined (best-effort vs. explicit "unsupported"
-    message — see Assumptions).
+30. Vidernu's v1 language scope is **settled** as follows:
+    a. **Source (caption) language — language-agnostic, keyed to the active caption track.**
+       Vidernu MUST use language-agnostic prompting keyed to the language of the active YouTube
+       caption track; it MUST NOT hard-restrict analysis to a single fixed source language.
+    b. **Primary validation targets — Korean and Japanese.** These two languages (chosen for
+       their honorifics/particle emphasis) are the primary targets against which the four-section
+       breakdown and JSON contract MUST be validated for v1.
+    c. **Output/explanation language — English (fixed).** All explanatory output across all four
+       side-panel sections (FR-5) — both translations, per-token part-of-speech and
+       role/meaning, context notes, and grammar rules — MUST be rendered in **English**,
+       regardless of the source caption language. English is fixed for v1; it is not
+       user-configurable.
+31. The four-section breakdown (FR-5) and the JSON contract (FR-6) MUST be produced for the
+    primary validated languages (Korean, Japanese). For other/untested source languages,
+    Vidernu MUST attempt **best-effort** analysis (still English output, still the FR-6 schema)
+    rather than refusing outright; when a source language is outside the validated set, the
+    panel SHOULD surface a non-blocking "not fully validated for this language" note so results
+    are not mistaken for validated quality. Best-effort output that cannot be parsed falls
+    through to the FR-7 error path like any other unparseable result.
 
 ### FR-9 — Memory / footprint design levers (soft target)
 
@@ -197,6 +219,9 @@ must honor**; the exact wiring is the planner's lane, not this spec's.
 ## Out of scope (v1)
 
 - Multi-language localization of the extension's own UI chrome.
+- User-configurable output/explanation language — output is **fixed to English** in v1 (FR-8).
+- Trigger mechanisms other than the in-panel "Analyze current line" button (e.g. click-on-live-
+  caption, keyboard hotkey) — candidate later additions, not in v1 (FR-4).
 - Any server/cloud fallback inference path — Vidernu is local-only by design.
 - Persisting analysis history across sessions (accepted default: **no persistence in v1**).
 - YouTube surfaces other than standard watch pages (e.g. Shorts, embedded players, live
@@ -214,15 +239,20 @@ must honor**; the exact wiring is the planner's lane, not this spec's.
   persisted weights or corrupting storage.
 - **Storage quota exceeded / eviction.** Persisted model evicted by the browser → detected on
   next load, re-download triggered, badge reflects state; no crash.
-- **Captions off or unavailable.** Trigger disabled / clear "turn on captions" indication
-  (FR-12).
+- **Captions off or unavailable.** "Analyze current line" button disabled / clear "turn on
+  captions" indication (FR-12).
+- **Panel closed.** With the panel closed there is no visible trigger; opening the panel is the
+  path to analysis (accepted v1 interaction — FR-4).
 - **Caption changes between trigger and completion.** Result is labeled with the analyzed
   line text; the panel shows what was analyzed, not whatever is now on screen (FR-15).
 - **Rapid repeated triggers.** Latest-wins supersession; no stale/interleaved results (FR-17).
 - **Empty or whitespace-only active caption** (e.g. `[music]`, blank cue). Treated as no
-  analyzable line; trigger no-ops or shows a gentle "no text to analyze" message.
+  analyzable line; the button no-ops or shows a gentle "no text to analyze" message.
 - **Non-linguistic caption content** (sound-effect tags like `[applause]`). Best-effort; must
   not crash — may return an empty/degraded but valid structure or the error fallback.
+- **Untested / non-Korean-non-Japanese source language.** Best-effort English analysis via the
+  FR-6 schema, with a non-blocking "not fully validated for this language" note (FR-8.31);
+  unparseable output falls through to the FR-27 error path.
 - **Malformed model output** (fences, trailing prose, truncated JSON). Sanitized/repaired;
   unrecoverable → FR-27 error object, retryable.
 - **Inference timeout / very long line.** Bounded timeout → FR-27 error state (FR-29).
@@ -257,22 +287,30 @@ Binary and testable, in Given/When/Then form.
   non-blocking performance-advisory warning is shown and analysis remains available.
 
 **Capture & trigger (FR-3, FR-4)**
-- **Given** a watch page with captions displayed, **when** the user fires the analysis
-  trigger, **then** exactly the currently-active caption line text is captured and shown as the
-  analyzed line in the panel.
-- **Given** a watch page with captions turned off/unavailable, **when** the user looks for the
-  trigger, **then** it is disabled or clearly indicates captions are required, and firing it
-  does not start analysis of empty text.
-- **Given** an analysis already in progress, **when** the user triggers analysis of a newer
-  line, **then** the panel ends up showing the result for the newest requested line only, with
-  no stale/interleaved output.
+- **Given** a watch page with captions displayed and the panel open, **when** the user clicks
+  the "Analyze current line" button, **then** exactly the currently-active caption line text is
+  captured and shown as the analyzed line in the panel.
+- **Given** a watch page with captions turned off/unavailable, **when** the user looks at the
+  "Analyze current line" button, **then** it is disabled or clearly indicates captions are
+  required, and clicking it does not start analysis of empty text.
+- **Given** an analysis already in progress, **when** the user clicks "Analyze current line"
+  again for a newer line, **then** the panel ends up showing the result for the newest requested
+  line only, with no stale/interleaved output.
 - **Given** any completed analysis, **when** the video has since advanced to a different
   caption, **then** the panel still clearly shows which line text the displayed result is for.
 
-**Panel UI (FR-5)**
+**Panel UI & language (FR-5, FR-8)**
 - **Given** a successful analysis, **when** the panel renders, **then** all four sections
   (Translation with literal vs. natural, Deconstruction token rows, Context & Meaning, Grammar
   Notes) are present and populated from the response.
+- **Given** a successful analysis of a Korean or Japanese caption line, **when** the panel
+  renders, **then** the original source-language sentence is shown verbatim while both
+  translations, the per-token part-of-speech and role/meaning, the context notes, and the
+  grammar rules are all rendered in **English**.
+- **Given** a caption whose source language is outside the validated set (not Korean/Japanese),
+  **when** the user analyzes it, **then** Vidernu attempts best-effort English analysis in the
+  FR-6 schema and the panel surfaces a non-blocking "not fully validated for this language"
+  note (or falls through to the FR-27 error state if the output is unparseable).
 - **Given** the panel is open, **when** analysis is rendered, **then** the YouTube video
   remains fully visible in a resized split view and is not covered by an overlay.
 - **Given** a valid response with an empty section (e.g. no grammar rules), **when** rendered,
@@ -329,29 +367,26 @@ Binary and testable, in Given/When/Then form.
 
 ## Assumptions & open questions
 
-Two items are genuine intent decisions surfaced to the user as **NEEDS DECISION**; the rest are
-accepted sensible defaults (reversible, non-foreclosing) recorded so the pipeline can proceed
-autonomously per the process note. **This spec cannot be `Ratified` until the two NEEDS
-DECISION items are resolved or explicitly accepted.**
+**No open questions remain.** Both prior NEEDS DECISION items (FR-8 language scope & output
+language; FR-4 analysis trigger mechanism) were reviewed by the product owner and resolved with
+the recommended defaults — now written into the requirements above as settled behavior. The
+remaining items below are accepted sensible defaults (reversible, non-foreclosing) recorded so
+the pipeline can proceed. This spec is **Ratified**.
 
-**Open questions requiring a user decision (blockers to Ratification):**
-- `[OPEN QUESTION | HIGH]` **Language scope & output language (FR-8).** Should v1 be (a)
-  **language-agnostic**, keyed to the active YouTube caption track language, with Korean &
-  Japanese as primary validation targets; or (b) **scoped to one specific language pair only**
-  (e.g. Korean→English or Japanese→English)? And what is the **output/explanation language**?
-  *Recommended default:* (a) language-agnostic prompting keyed to the caption track language,
-  Korean/Japanese as primary validated targets, **English** as the output/explanation language;
-  untested languages get best-effort output with a "not fully validated" note. → **NEEDS
-  DECISION.**
-- `[OPEN QUESTION | HIGH]` **Analysis trigger mechanism (FR-4).** How does a line get into the
-  side panel for analysis — an always-visible "Analyze current line" button in the panel, a
-  click on the live caption, a keyboard hotkey, or a combination? *Recommended default:* an
-  always-visible **"Analyze current line" button in the side panel** that captures whatever
-  caption is active at click time (simplest, most discoverable, no interference with YouTube's
-  own caption/keyboard handling); a hotkey can be added later without rework. → **NEEDS
-  DECISION.**
+**Resolved decisions (formerly NEEDS DECISION — now settled requirements):**
+- `[DECISION | owner-approved 2026-07-03]` **Language scope & output language (FR-8).**
+  Language-agnostic prompting keyed to the active YouTube caption track's language; Korean and
+  Japanese are the primary validation targets; **English** is the fixed explanation/output
+  language for all four side-panel sections regardless of source caption language (not
+  user-configurable in v1). Untested source languages get best-effort English output in the
+  FR-6 schema with a "not fully validated for this language" note.
+- `[DECISION | owner-approved 2026-07-03]` **Analysis trigger mechanism (FR-4).** An
+  always-visible **"Analyze current line" button in the side panel**, which captures whatever
+  subtitle line is active in the caption DOM at the moment of the click. Consequence (accepted):
+  the panel must be open to trigger analysis. Keyboard hotkey and click-on-caption triggers are
+  deferred to a later version without rework.
 
-**Accepted defaults (recorded; will be treated as decisions unless the user objects):**
+**Accepted defaults (recorded decisions):**
 - `[ASSUMPTION | MEDIUM]` **Model pinned to `onnx-community/gemma-4-E2B-it-ONNX`** (Gemma 4,
   E2B, INT4 ONNX) via `@huggingface/transformers` v3 `device: "webgpu"`, as confirmed in the
   brief. Model weights fetched once from their Hugging Face hosting origin (the one permitted
@@ -368,7 +403,11 @@ DECISION items are resolved or explicitly accepted.**
   prompt / metered-connection gate in v1); progress shown via badge. A "download now?" prompt
   is a possible later refinement.
 - `[ASSUMPTION | LOW]` **The whole visible active caption window text is the unit of analysis**
-  (FR-13), including multi-line cues.
+  (FR-13), including multi-line cues; the "Analyze current line" button captures this whole
+  active window as one line (FR-4 + FR-13 compose without conflict).
+- `[ASSUMPTION | LOW]` **The "not fully validated for this language" note** for out-of-scope
+  source languages (FR-8.31) is a small non-blocking panel affordance; exact copy/placement is
+  the implementer's lane.
 - `[ASSUMPTION | LOW]` **Panel open/closed state need not persist** across sessions in v1.
 - `[ASSUMPTION | LOW]` **Under-provisioned-device detection is best-effort advisory only**
   (FR-9.9); there is no reliable JS API for exact VRAM, so the warning is heuristic.
