@@ -77,7 +77,10 @@ chrome.action.onClicked.addListener((tab) => {
 
 // requestId -> where an in-flight analysis came from, so its eventual
 // INFERENCE_RESULT (pushed by the offscreen document, with no tab context
-// of its own) can be relayed back to the right tab.
+// of its own) can be relayed back to the right tab. Entries are removed on
+// every INFERENCE_RESULT, whether it "wins" or arrives with
+// `superseded: true` — otherwise a stale request's entry would never be
+// cleaned up and the map would grow for the life of the service worker.
 const pendingAnalyses = new Map<number, { tabId: number; analyzedLine: string }>();
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
@@ -126,7 +129,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (isInferenceResult(message)) {
     const pending = pendingAnalyses.get(message.requestId);
     pendingAnalyses.delete(message.requestId);
-    if (!pending) return false;
+    if (!pending || message.superseded) return false;
     send(pending.tabId, {
       type: "ANALYSIS_RESULT",
       requestId: message.requestId,

@@ -132,14 +132,14 @@ export function setAnalyzeButtonState(
   if (options.label) els.analyzeButton.textContent = options.label;
 }
 
-function setAnalyzedLine(els: PanelElements, text: string | null): void {
+function setAnalyzedLine(els: PanelElements, text: string | null, label = "Analyzing"): void {
   if (!text) {
     els.analyzedLine.hidden = true;
     els.analyzedLine.textContent = "";
     return;
   }
   els.analyzedLine.hidden = false;
-  els.analyzedLine.textContent = `Analyzing: "${text}"`;
+  els.analyzedLine.textContent = `${label}: "${text}"`;
 }
 
 function setStatus(els: PanelElements, text: string | null): void {
@@ -179,7 +179,7 @@ export function renderAnalysisError(
   analyzedLine: string,
   message: string,
 ): void {
-  setAnalyzedLine(els, analyzedLine);
+  setAnalyzedLine(els, analyzedLine, "Analyzed");
   setStatus(els, null);
   els.sections.innerHTML = "";
   const errorBox = el("div", "vidernu-error");
@@ -253,7 +253,7 @@ export function renderAnalysis(
   analyzedLine: string,
   result: AnalysisResult,
 ): void {
-  setAnalyzedLine(els, analyzedLine);
+  setAnalyzedLine(els, analyzedLine, "Analyzed");
   setStatus(els, null);
   els.sections.innerHTML = "";
   els.sections.appendChild(renderTranslationSection(result));

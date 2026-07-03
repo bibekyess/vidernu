@@ -68,6 +68,10 @@ export interface InferenceResult {
   type: "INFERENCE_RESULT";
   requestId: number;
   result: AnalysisResult | AnalysisError;
+  // Set when a newer RUN_INFERENCE has already superseded this one (FR-17
+  // latest-wins); lets the service worker drop its pendingAnalyses entry
+  // without relaying a stale result to the tab.
+  superseded?: boolean;
 }
 
 // SW -> content script (panel), pushed or as a GET_STATE reply
@@ -175,7 +179,12 @@ export function isCapabilityMsg(value: unknown): value is CapabilityMsg {
 }
 
 export function isInferenceResult(value: unknown): value is InferenceResult {
-  return isRecord(value) && value.type === "INFERENCE_RESULT" && isNumber(value.requestId);
+  return (
+    isRecord(value) &&
+    value.type === "INFERENCE_RESULT" &&
+    isNumber(value.requestId) &&
+    (value.superseded === undefined || typeof value.superseded === "boolean")
+  );
 }
 
 export function isStateSnapshot(value: unknown): value is StateSnapshot {

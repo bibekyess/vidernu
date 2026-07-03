@@ -70,7 +70,13 @@ async function handleRunInference(requestId: number, text: string, lang?: string
     },
   );
 
-  if (currentRequestId !== requestId) return; // a newer request has already won
+  if (currentRequestId !== requestId) {
+    // A newer request has already won; still notify the service worker (with
+    // `superseded: true`) so it drops this request's `pendingAnalyses` entry
+    // instead of it accumulating there for the rest of the session.
+    post({ type: "INFERENCE_RESULT", requestId, result, superseded: true });
+    return;
+  }
   post({ type: "INFERENCE_RESULT", requestId, result });
 }
 
