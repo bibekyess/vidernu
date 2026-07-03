@@ -1,0 +1,157 @@
+/* Scoped inside the injected panel's shadow root — never leaks onto the YouTube page. */
+
+:host,
+.vidernu-panel {
+  all: initial;
+  display: block;
+  font-family: Roboto, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #0f0f0f;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.vidernu-panel * {
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.vidernu-panel {
+  padding: 12px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.vidernu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.vidernu-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.vidernu-analyze-btn {
+  background: #065fd4;
+  color: #fff;
+  border: none;
+  border-radius: 18px;
+  padding: 8px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vidernu-analyze-btn:disabled {
+  background: #cccccc;
+  color: #666666;
+  cursor: not-allowed;
+}
+
+.vidernu-caption-hint {
+  font-size: 12px;
+  color: #1e8e3e;
+  margin-bottom: 8px;
+}
+
+.vidernu-caption-hint-missing {
+  color: #a50e0e;
+}
+
+.vidernu-model-state {
+  font-size: 12px;
+  color: #555555;
+  margin-bottom: 10px;
+}
+
+.vidernu-banner {
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.vidernu-banner-error {
+  background: #fce8e6;
+  color: #a50e0e;
+}
+
+.vidernu-banner-warning {
+  background: #fef7e0;
+  color: #7a5900;
+}
+
+.vidernu-banner-info {
+  background: #e8f0fe;
+  color: #174ea6;
+}
+
+.vidernu-analyzed-line {
+  font-style: italic;
+  color: #555555;
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+
+.vidernu-status {
+  margin-bottom: 10px;
+  color: #555555;
+}
+
+.vidernu-section {
+  margin-bottom: 16px;
+  border-top: 1px solid #e5e5e5;
+  padding-top: 10px;
+}
+
+.vidernu-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.vidernu-empty {
+  color: #888888;
+  font-style: italic;
+}
+
+.vidernu-deconstruction-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.vidernu-deconstruction-table th,
+.vidernu-deconstruction-table td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid #eeeeee;
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.vidernu-source-text {
+  font-weight: 600;
+}
+
+.vidernu-grammar-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.vidernu-error {
+  background: #fce8e6;
+  color: #a50e0e;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.vidernu-error-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #7a2f2f;
+}

@@ -1,0 +1,18 @@
+dist
+node_modules
+package-lock.json
+
+# Hand-authored org scaffolding/process docs predate this project's tooling
+# and are not written in prettier's default markdown style (see AGENTS.md:
+# "smallest change that works" — don't reformat files outside the task).
+CHANGELOG.md
+README.md
+AGENTS.md
+CLAUDE.md
+LICENSE
+TEMPLATE_VERSION
+.claude/
+.github/
+adr/
+plans/
+specs/

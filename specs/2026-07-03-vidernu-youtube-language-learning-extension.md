@@ -1,7 +1,7 @@
 ---
 title: Vidernu — privacy-first local-inference language-learning Chrome extension for YouTube
 date: 2026-07-03
-status: Ratified        # Draft | Ratified | Delivered
+status: Delivered        # Draft | Ratified | Delivered
 ---
 
 # 2026-07-03 — Vidernu: privacy-first local-inference language-learning Chrome extension for YouTube

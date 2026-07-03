@@ -1,21 +1,25 @@
-# Quality gate — stack-agnostic. Fill each recipe with your project's real command.
+# Quality gate — see adr/2026-07-02-quality-gate-contract-justfile.md.
 # `just check` is the single gate command used by AGENTS.md, CI, and the reviewer.
 
 # Run the whole gate.
-check: format lint typecheck test
+check: format lint typecheck test build
 
-# Format code. Fill in, e.g.: prettier --write . / ruff format .
+# Format code.
 format:
-    @echo "format: no-op (fill in your formatter)"
+    npx prettier --write .
 
-# Lint. Fill in, e.g.: eslint . / ruff check .
+# Lint.
 lint:
-    @echo "lint: no-op (fill in your linter)"
+    npx eslint . --max-warnings 0
 
-# Type-check. Fill in, e.g.: tsc --noEmit / mypy .
+# Type-check.
 typecheck:
-    @echo "typecheck: no-op (fill in your type checker)"
+    npx tsc --noEmit
 
-# Tests. Fill in, e.g.: npm test / pytest
+# Tests.
 test:
-    @echo "test: no-op (fill in your test runner)"
+    npx vitest run
+
+# Build the unpacked extension into dist/.
+build:
+    npx vite build
