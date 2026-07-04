@@ -71,6 +71,10 @@ The ORT files land at `dist/ort/<name>` with stable, hash-free filenames so
 
 - Easier: the model-load CSP error is eliminated; ORT loads from `chrome-extension://…`
   which satisfies `script-src 'self'`; version pinning is structurally enforced.
+  Running the bundled ORT WASM additionally requires the `'wasm-unsafe-eval'` directive
+  in the manifest's `content_security_policy.extension_pages` — MV3's default
+  `script-src 'self'` forbids WebAssembly compilation, so this directive is set alongside
+  the local-bundling decision to complete the fix.
 - Harder / trade-offs: `dist/` grows by ~23 MB (the WASM binary) on top of the existing
   build output. The `.wasm` file was already emitted into `dist/assets/` (hashed) by
   Vite's default asset pipeline; `dist/ort/` is a second copy at a stable path. A future

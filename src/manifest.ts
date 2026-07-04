@@ -22,6 +22,15 @@ export default defineManifest({
   name: "Vidernu",
   description: "Privacy-first, on-device grammar and translation breakdowns for YouTube captions.",
   version,
+  // MV3's default CSP (`script-src 'self'`) forbids WebAssembly compilation, which
+  // onnxruntime-web requires when initialising its WASM backend in the offscreen
+  // document. `'wasm-unsafe-eval'` is the narrowest directive that allows WASM
+  // instantiation without opening any remote-script surface. The ORT runtime is
+  // bundled locally (see adr/2026-07-04-local-onnx-runtime-bundling.md), so no
+  // remote sources are added here.
+  content_security_policy: {
+    extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+  },
   action: {
     default_title: "Vidernu — click to open the analysis panel",
   },
