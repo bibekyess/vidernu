@@ -470,19 +470,49 @@ covered manually below. Do not mock `navigator.gpu` / transformers.js into a pre
    interleaving. (FR-17.)
 8. **Analyzed-line labeling:** let the video advance → panel still shows which line the
    result is for. (FR-15.)
-9. **Four sections (ko + ja):** all four render; source sentence verbatim; all explanation in
-   English. (FR-5, FR-8.)
-10. **Untested language:** non-ko/ja line → best-effort English + "not fully validated" note,
-    or FR-27 fallback. (FR-8.31.)
-11. **Split view:** YouTube video stays fully visible in the resized area, not covered. (FR-18.)
-12. **Empty section:** a valid response missing grammar rules → "not available", layout
+
+**Items 9–16 superseded by the 2026-07-04 two-phase/stop/retry/UX-polish plan** (see
+`plans/2026-07-04-two-phase-analysis-stop-retry-polish.md`) — the single combined
+four-section generation and the stacked-section display no longer exist; the checklist below
+replaces them:
+
+9. **Two-phase quick flow:** Analyze → **only** the translation renders on an active
+   Translation tab; the three detail tabs are visibly present but locked/pending; "Show
+   detailed breakdown" offered; no deconstruction/context/grammar generated yet (FR-A1/A2/E6).
+10. **No background prefetch:** do nothing after a quick result → the detail phase never runs
+    (FR-A3).
+11. **On-demand detail flow:** Show detailed breakdown → second generation populates the three
+    detail tabs together; translation stays; loading confined to the detail tabs (FR-A3/E1).
+12. **Captured-line stability:** advance the video, then Show detailed breakdown → detail
+    analyzes the **originally captured** line; label unchanged (FR-A4).
+13. **Fresh analyze supersedes both phases:** trigger a new Analyze while detail is in flight
+    for the prior line → panel shows only the new line's quick flow; no stale/interleaved
+    output (FR-A8).
+14. **Stop (detail):** stop the detail phase → halts promptly; translation stays; detail
+    requestable again (FR-C4).
+15. **Stop (quick):** stop the quick phase → returns to fresh "ready to analyze"; no partial
+    result/indicator (FR-C4).
+16. **Stop race:** stop a beat before completion → deterministic: either result renders or
+    stop wins, never both, no late leak (FR-C5, edge case).
+17. **Per-phase retry:** quick succeeds, detail fails/times out → detail tabs show inline
+    error + Retry (phase-2 only); translation untouched; retry re-runs detail only
+    (FR-D2/D3). Quick fails → inline error + Retry on Translation tab; no detail trigger;
+    detail tabs stay locked (FR-A5/D2).
+18. **Double-retry guard:** double-press Retry → no duplicate concurrent generation
+    (edge case).
+19. **Untested language:** non-ko/ja line → best-effort English + "not fully validated" note,
+    or FR-27 fallback, in whichever phase's tab is affected. (FR-8.31.)
+20. **Split view:** YouTube video stays fully visible in the resized area, not covered.
+    (FR-18/FR-E5.)
+21. **Empty section:** a valid detail response missing grammar rules → "not available", layout
     intact. (FR-5.21.)
-13. **Malformed output / timeout:** exact FR-27 message renders as a readable retry state;
-    retry works; layout unbroken. (FR-7.)
-14. **Privacy:** DevTools Network across an analysis → only the one-time HF weight fetch; no
+22. **Visual identity:** charcoal/graphite bg, teal active tab/primary buttons, red/orange
+    only for error/Stop; deconstruction as token-cards; "Local · Private" badge in header
+    across all states (FR-E6/E7/E8).
+23. **Privacy:** DevTools Network across an analysis → only the one-time HF weight fetch; no
     subtitle text/analysis leaves the device. (FR-10.)
-15. **Footprint levers:** many sequential analyses → observe no growing chat history /
-    KV-cache (each call fresh). (FR-9.)
+24. **Footprint levers:** many sequential two-phase analyses → observe no growing chat history /
+    KV-cache across phases or across analyses (each call fresh). (FR-9, FR-A7.)
 
 ## Risk & Sequencing
 

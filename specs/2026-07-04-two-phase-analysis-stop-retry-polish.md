@@ -1,7 +1,7 @@
 ---
 title: Two-phase on-demand analysis, stop & retry controls, and panel UX polish
 date: 2026-07-04
-status: Ratified        # Draft | Ratified | Delivered
+status: Delivered        # Draft | Ratified | Delivered
 ---
 
 # 2026-07-04 — Two-phase on-demand analysis, stop & retry controls, and panel UX polish

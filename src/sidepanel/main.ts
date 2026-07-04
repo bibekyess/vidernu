@@ -1,8 +1,10 @@
 /**
  * Panel bootstrap. Mounted by the content script into the shadow root it
- * creates via `panel-injector.ts` (FR-5.18). Owns the "Analyze current
- * line" button, the latest-wins request/response bookkeeping (FR-17), and
- * subscribing to pushed model/capability state.
+ * creates via `panel-injector.ts` (FR-5.18). Owns the two-phase analysis
+ * flow (FR-A), Stop (FR-C), per-phase Retry (FR-D), and subscribing to
+ * pushed model/capability state. The mutable `state` (see `panel-state.ts`)
+ * plus the per-phase latest-request-id bookkeeping is this module's single
+ * source of truth; every mutation is followed by a `render()` call.
  */
 import { formatBadgeTitle, VALIDATED_LANGS } from "../shared/constants";
 import {
@@ -10,18 +12,35 @@ import {
   isCapabilityMsg,
   isModelStatusMsg,
   isStateSnapshot,
+  type AnalysisPhase,
   type Message,
   type ModelStatusValue,
 } from "../shared/messages";
-import { isAnalysisError } from "../shared/schema";
+import { isAnalysisError, type DetailResult, type QuickResult } from "../shared/schema";
+import {
+  deriveTabStates,
+  detailFailed,
+  detailSucceeded,
+  INITIAL_PANEL_STATE,
+  quickFailed,
+  quickSucceeded,
+  retryDetail,
+  retryQuick,
+  runningPhase,
+  setActiveTab,
+  showDetailTrigger,
+  startDetail,
+  startQuick,
+  stopDetail,
+  stopQuick,
+  type PanelState,
+  type TabId,
+} from "./panel-state";
 import cssText from "./sidepanel.css?inline";
 import {
-  type PanelElements,
-  renderAnalysis,
-  renderAnalysisError,
   renderCaptureError,
-  renderLoading,
   renderNoCaption,
+  renderPanel,
   renderSkeleton,
   setAdvisoryBanner,
   setAnalyzeButtonState,
@@ -30,6 +49,7 @@ import {
   setLoadError,
   setModelState,
   setValidationNote,
+  type PanelElements,
 } from "./render";
 
 export interface CaptureAttempt {
@@ -45,6 +65,8 @@ export interface PanelHandle {
   updateCaptionHint(present: boolean): void;
   destroy(): void;
 }
+
+const TAB_ORDER: readonly TabId[] = ["translation", "deconstruction", "context", "grammar"];
 
 let requestCounter = 0;
 
@@ -80,10 +102,55 @@ export function mountPanel(
     chrome.runtime.sendMessage({ type: "LOAD_MODEL" } satisfies Message);
   });
 
-  let latestRequestId = 0;
-  let pendingLang: string | undefined;
+  // Per-phase latest-wins request ids (FR-A8). 0 never matches a real
+  // requestId (the counter starts at 1), so it is a safe "nothing pending"
+  // sentinel for the phase that has not run yet.
+  let latestQuickRequestId = 0;
+  let latestDetailRequestId = 0;
+  let state: PanelState = INITIAL_PANEL_STATE;
+  // The captured line + lang both phases of the current analysis operate on
+  // (FR-A4) — set once per "Analyze current line" click, reused by the
+  // detail phase and by retry, never by whatever caption is on screen later.
+  let currentAnalysis: { text: string; lang?: string } | null = null;
+
   let webgpuAvailable = true;
   let modelStatus: ModelStatusValue = "standby";
+
+  function render(): void {
+    renderPanel(els, state, {
+      onRetryQuick: () => handleRetry("quick"),
+      onRetryDetail: () => handleRetry("detail"),
+    });
+  }
+
+  function sendAnalyze(requestId: number, phase: AnalysisPhase, text: string, lang?: string): void {
+    chrome.runtime.sendMessage({
+      type: "ANALYZE_REQUEST",
+      requestId,
+      phase,
+      text,
+      lang,
+    } satisfies Message);
+  }
+
+  function handleRetry(phase: AnalysisPhase): void {
+    if (!currentAnalysis) return;
+    // Double-press guard (edge case): ignore if that phase is already in flight.
+    if (phase === "quick") {
+      if (state.quick.status === "loading") return;
+      state = retryQuick(state);
+      const id = ++requestCounter;
+      latestQuickRequestId = id;
+      sendAnalyze(id, "quick", currentAnalysis.text, currentAnalysis.lang);
+    } else {
+      if (state.detail.status === "loading") return;
+      state = retryDetail(state);
+      const id = ++requestCounter;
+      latestDetailRequestId = id;
+      sendAnalyze(id, "detail", currentAnalysis.text, currentAnalysis.lang);
+    }
+    render();
+  }
 
   function refreshButtonState(): void {
     if (!webgpuAvailable) {
@@ -97,7 +164,7 @@ export function mountPanel(
     setAnalyzeButtonState(els, { enabled: true, label: "Analyze current line" });
   }
 
-  function applyState(state: {
+  function applyState(stateUpdate: {
     modelStatus: ModelStatusValue;
     progress?: number;
     webgpu: boolean;
@@ -107,27 +174,27 @@ export function mountPanel(
     // does not wipe the visible error detail while the status is still "error".
     preserveLoadError?: boolean;
   }): void {
-    webgpuAvailable = state.webgpu;
-    modelStatus = state.modelStatus;
+    webgpuAvailable = stateUpdate.webgpu;
+    modelStatus = stateUpdate.modelStatus;
 
     setFallbackBanner(
       els,
-      state.webgpu ? null : "Please enable WebGPU or update your GPU drivers to run Vidernu.",
+      stateUpdate.webgpu ? null : "Please enable WebGPU or update your GPU drivers to run Vidernu.",
     );
     setAdvisoryBanner(
       els,
-      state.webgpu && state.lowPowerHint
+      stateUpdate.webgpu && stateUpdate.lowPowerHint
         ? "Your device's GPU may be under-provisioned for this model — analysis could be slow."
         : null,
     );
-    setModelState(els, describeModelState(state.modelStatus, state.progress));
+    setModelState(els, describeModelState(stateUpdate.modelStatus, stateUpdate.progress));
 
     // Render the dedicated load-error area on error, clear it on any other status (FR-4/FR-5).
     // Skip when the caller signals that the load-error should be left untouched (e.g. a
     // capability-only update that carries no new status and no new error detail).
-    if (!state.preserveLoadError) {
-      if (state.modelStatus === "error") {
-        setLoadError(els, state.message ?? "");
+    if (!stateUpdate.preserveLoadError) {
+      if (stateUpdate.modelStatus === "error") {
+        setLoadError(els, stateUpdate.message ?? "");
       } else {
         setLoadError(els, null);
       }
@@ -163,19 +230,32 @@ export function mountPanel(
       return;
     }
     if (isAnalysisResultMsg(message)) {
-      if (message.requestId !== latestRequestId) return; // stale — latest-wins (FR-17)
-      if (isAnalysisError(message.result)) {
-        renderAnalysisError(els, message.analyzedLine, message.result.message);
+      if (message.phase === "quick") {
+        if (message.requestId !== latestQuickRequestId) return; // stale (FR-A8/C5)
+        if (isAnalysisError(message.result)) {
+          state = quickFailed(state, message.result.message);
+        } else {
+          state = quickSucceeded(state, message.result as QuickResult);
+          setValidationNote(
+            els,
+            isValidatedLang(currentAnalysis?.lang)
+              ? null
+              : "This source language isn't fully validated yet (Vidernu's primary targets are " +
+                  "Korean and Japanese) — treat this best-effort result with extra care.",
+          );
+        }
+        render();
         return;
       }
-      renderAnalysis(els, message.analyzedLine, message.result);
-      setValidationNote(
-        els,
-        isValidatedLang(pendingLang)
-          ? null
-          : "This source language isn't fully validated yet (Vidernu's primary targets are " +
-              "Korean and Japanese) — treat this best-effort result with extra care.",
-      );
+      if (message.phase === "detail") {
+        if (message.requestId !== latestDetailRequestId) return; // stale (FR-A8/C5)
+        if (isAnalysisError(message.result)) {
+          state = detailFailed(state, message.result.message);
+        } else {
+          state = detailSucceeded(state, message.result as DetailResult);
+        }
+        render();
+      }
     }
   };
 
@@ -188,9 +268,6 @@ export function mountPanel(
   });
 
   els.analyzeButton.addEventListener("click", () => {
-    const requestId = ++requestCounter;
-    latestRequestId = requestId;
-
     const capture = captureCaption();
     if (capture.readError) {
       renderCaptureError(els);
@@ -201,16 +278,54 @@ export function mountPanel(
       return;
     }
 
-    pendingLang = capture.lang;
+    currentAnalysis = { text: capture.text, lang: capture.lang };
     setValidationNote(els, null);
-    renderLoading(els, capture.text);
-    chrome.runtime.sendMessage({
-      type: "ANALYZE_REQUEST",
-      requestId,
-      text: capture.text,
-      lang: capture.lang,
-    } satisfies Message);
+    state = startQuick(capture.text, capture.lang);
+    const id = ++requestCounter;
+    latestQuickRequestId = id;
+    // A fresh analyze supersedes the whole panel (FR-A8) — invalidate any
+    // prior detail request so a late detail result for the old line can
+    // never render under the new one.
+    latestDetailRequestId = 0;
+    sendAnalyze(id, "quick", capture.text, capture.lang);
+    render();
   });
+
+  els.detailTrigger.addEventListener("click", () => {
+    if (!currentAnalysis || !showDetailTrigger(state)) return;
+    state = startDetail(state);
+    const id = ++requestCounter;
+    latestDetailRequestId = id;
+    sendAnalyze(id, "detail", currentAnalysis.text, currentAnalysis.lang);
+    render();
+  });
+
+  els.stopButton.addEventListener("click", () => {
+    const phase = runningPhase(state);
+    if (!phase) return; // no-op — nothing in flight (edge case)
+    const requestId = phase === "quick" ? latestQuickRequestId : latestDetailRequestId;
+    chrome.runtime.sendMessage({ type: "STOP_ANALYSIS", requestId, phase } satisfies Message);
+    // The panel is authoritative over its own UI (ADR
+    // 2026-07-04-user-initiated-cooperative-stop.md) — transition optimistically
+    // rather than waiting for the offscreen document's acknowledgment.
+    state = phase === "quick" ? stopQuick(state) : stopDetail(state);
+    // Bump that phase's latest id to a never-sent sentinel so a result that
+    // raced the stop is still dropped by the ANALYSIS_RESULT handler (FR-C5).
+    if (phase === "quick") {
+      latestQuickRequestId = ++requestCounter;
+    } else {
+      latestDetailRequestId = ++requestCounter;
+    }
+    render();
+  });
+
+  for (const tabId of TAB_ORDER) {
+    els.tabs[tabId].addEventListener("click", () => {
+      if (deriveTabStates(state)[tabId] === "pending") return; // locked (FR-E6)
+      state = setActiveTab(state, tabId);
+      render();
+    });
+  }
 
   return {
     updateCaptionHint(present: boolean): void {
