@@ -21,6 +21,11 @@ import { getPipeline } from "./model";
 // adr/2026-07-03-offscreen-document-owns-webgpu-inference.md).
 const SUPERSESSION_POLL_MS = 200;
 
+// Flip to false once the structured-output issue is diagnosed.
+const DEBUG_INFERENCE = true;
+
+const LOG = "[Vidernu][inference]";
+
 /**
  * Runs one inference. `isSuperseded` is polled while generating so a newer
  * trigger (or a timeout, see offscreen.ts) can stop a stale generation
@@ -56,15 +61,56 @@ export async function runInference(
     stopping_criteria: stoppingCriteria,
   } as PipelineOptions & { stopping_criteria: StoppingCriteriaList };
 
+  if (DEBUG_INFERENCE) {
+    console.debug(LOG, "input text:", text);
+    console.debug(LOG, "lang:", lang);
+    console.debug(LOG, "messages (prompt):", messages);
+    console.debug(LOG, "generateOptions:", {
+      max_new_tokens: MAX_NEW_TOKENS,
+      do_sample: true,
+      temperature: TEMPERATURE,
+      return_full_text: false,
+    });
+  }
+
   try {
     const output = (await generator(messages, generateOptions)) as TextGenerationOutput;
 
-    if (isSuperseded()) return makeAnalysisError();
+    if (DEBUG_INFERENCE) {
+      console.debug(LOG, "raw output object:", output);
+    }
+
+    if (isSuperseded()) {
+      console.debug(LOG, "superseded after generation — discarding result");
+      return makeAnalysisError();
+    }
 
     const first = Array.isArray(output) ? output[0] : undefined;
     const generatedText = typeof first?.generated_text === "string" ? first.generated_text : "";
-    return sanitizeAndParse(generatedText) ?? makeAnalysisError();
-  } catch {
+
+    if (DEBUG_INFERENCE) {
+      console.debug(LOG, "generatedText (raw model output):", generatedText);
+    }
+
+    const parsed = sanitizeAndParse(generatedText);
+    if (parsed === null) {
+      // Log the raw text unconditionally so the failure is always visible in
+      // the offscreen console, regardless of the DEBUG_INFERENCE flag.
+      console.error(
+        LOG,
+        "sanitizeAndParse returned null — parse/validate failed. Raw generatedText:",
+        generatedText,
+      );
+      return makeAnalysisError();
+    }
+
+    if (DEBUG_INFERENCE) {
+      console.debug(LOG, "parse/validate succeeded:", parsed);
+    }
+
+    return parsed;
+  } catch (err) {
+    console.error(LOG, "generation threw:", err);
     return makeAnalysisError();
   } finally {
     clearInterval(pollId);
