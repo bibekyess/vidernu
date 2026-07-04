@@ -1,7 +1,7 @@
 ---
 title: Two-phase on-demand analysis, stop & retry controls, and panel UX polish
 date: 2026-07-04
-status: Draft        # Draft | Ratified | Delivered
+status: Ratified        # Draft | Ratified | Delivered
 ---
 
 # 2026-07-04 — Two-phase on-demand analysis, stop & retry controls, and panel UX polish
@@ -17,11 +17,12 @@ interaction into **two phases** — an immediate, cheap **quick translation**, a
 **on-demand detailed breakdown** the learner explicitly requests only when they want it —
 and adds first-class **stop** (cancel an in-flight generation) and per-phase **retry**
 (recover from an errored/empty/hung generation) controls. It also folds in the product
-owner's previously-deferred "wow-effect" UX bar: section-level loading (never a full-panel
-blocker), inline errors, a visible stop affordance, and smooth, jank-free transitions
-across the panel's content states. The value is responsiveness (quick things first), user
-control (interrupt slow work, recover from failures without losing good results), and a
-production-grade feel — all without weakening v1's privacy, local-only, and single-turn
+owner's previously-deferred "wow-effect" UX bar: tab-based section switching, section-level
+loading (never a full-panel blocker), inline errors, a visible stop affordance, a distinctive
+teal-on-charcoal visual identity, a persistent local/private indicator, and smooth, jank-free
+transitions across the panel's content states. The value is responsiveness (quick things
+first), user control (interrupt slow work, recover from failures without losing good results),
+and a production-grade feel — all without weakening v1's privacy, local-only, and single-turn
 stateless guarantees.
 
 **This spec builds on and extends the Delivered v1 spec**
@@ -57,6 +58,9 @@ which this change does **not** revisit).
 - As a **learner using the panel**, I want smooth, professional transitions between idle,
   loading, result, and error states — with loading confined to the section that is working,
   not a blank full-panel spinner — so that the tool feels polished and never janky.
+- As a **learner who chose Vidernu because it runs privately on my own machine**, I want the
+  panel to visibly reassure me that analysis stays local, so that its core advantage over
+  server-backed competitors is obvious while I use it.
 
 ## Definitions
 
@@ -69,6 +73,11 @@ which this change does **not** revisit).
   four-section design: **Deconstruction**, **Context & Meaning**, and **Grammar Notes**.
 - **Captured line** — the exact caption text captured at the moment "Analyze current line" was
   clicked (v1 FR-4.15). Both phases for one analysis operate on the same captured line.
+- **Analysis tabs** — the four content areas (Translation, Deconstruction, Context & Meaning,
+  Grammar Notes) presented as switchable tabs within the panel rather than four permanently
+  stacked sections (see Group E). "Tab" refers to a display/interaction affordance only; it
+  does not change the two-phase generation contract (Phase 1 fills Translation; Phase 2 fills
+  the other three together).
 
 ## Functional requirements
 
@@ -130,13 +139,22 @@ Delivered v1 spec.
   prompt and its own response contract. The union of the two shapes MUST be equivalent in
   content coverage to v1's four sections (no section is dropped; they are redistributed across
   two phases).
+- **FR-B1a (detail-phase prompt is independent — settled).** The detail-phase (Phase 2)
+  generation MUST run **independently over the captured source line only**. It MUST NOT receive
+  the Phase-1 translation (or any other Phase-1 output) as prompt context or grounding. Each
+  phase's prompt is constructed solely from the captured source line and its own phase-specific
+  instructions. (Rationale and origin: see Ratified decisions. This keeps the two prompts truly
+  separate and small, and matches the owner's "second, separate generation" framing.)
 - **FR-B2 (per-shape validation & error fallback).** Each phase's raw model output MUST pass
   through sanitization/repair and be validated against its own shape (extending v1 FR-7.26/27).
   A phase whose output cannot be parsed/validated after repair MUST resolve to a well-formed,
   per-phase error state (Group D), never a crash, blank panel, or broken layout (v1 FR-7.28).
-- **FR-B3 (per-phase timeout).** Each phase MUST be bounded by a timeout that resolves to the
-  same per-phase error state rather than hanging (extending v1 FR-7.29). The quick and detail
-  phases are separately bounded; a timeout in one MUST NOT be attributed to the other.
+- **FR-B3 (per-phase timeout — settled at `TIMEOUT_MS`).** Each phase MUST be bounded by a
+  timeout that resolves to the same per-phase error state rather than hanging (extending v1
+  FR-7.29). Both phases MUST reuse the existing per-analysis `TIMEOUT_MS` (120s) as their bound;
+  no separate or shorter quick-phase cap is introduced by this change (see Ratified decisions).
+  The quick and detail phases are separately bounded (each gets its own 120s timer); a timeout
+  in one MUST NOT be attributed to the other.
 - **FR-B4 (contract change is an ADR — flag for the implementer).** Splitting the inference
   contract into two request/response shapes is a **cross-cutting interface change** to the
   shared schema (`src/shared/schema.ts`), the message union (`src/shared/messages.ts`), and
@@ -169,7 +187,7 @@ Delivered v1 spec.
 - **FR-C4 (UI returns to a clean state on stop).**
   - Stopping the **detail phase** MUST leave the already-rendered **quick translation visible
     and intact**, and return the panel to a state where the learner can request the detailed
-    breakdown again (the detail section is not left showing a spinner or a half-result).
+    breakdown again (the detail tabs are not left showing a spinner or a half-result).
   - Stopping the **quick phase** MUST return the panel to a fresh **"ready to analyze"** state:
     no quick result, no detail result, no lingering in-progress indicator, and the "Analyze
     current line" trigger available again.
@@ -195,9 +213,10 @@ Delivered v1 spec.
   - If the **detail phase** fails while the quick phase succeeded, Retry MUST re-run **only the
     detail phase** — it MUST NOT re-run or discard the already-good quick translation.
 - **FR-D3 (retry appears inline on the affected part).** The Retry affordance MUST appear on the
-  errored part (the quick-translation area or the detail-breakdown area), consistent with the
-  existing v1 FR-7.27/28 error-fallback rendering and the model-load Retry pattern already in
-  the panel. It MUST NOT blank or disrupt the unaffected part of the panel (Group E).
+  errored part (the quick-translation area / Translation tab, or the detail-breakdown tabs),
+  consistent with the existing v1 FR-7.27/28 error-fallback rendering and the model-load Retry
+  pattern already in the panel. It MUST NOT blank or disrupt the unaffected part of the panel
+  (Group E).
 - **FR-D4 (retry clears the failed partial state).** Activating Retry for a phase MUST clear that
   phase's prior error/partial state and show a fresh in-progress state for that phase; it MUST
   NOT leave stale error text alongside the new attempt, and it MUST NOT clear a successful other
@@ -208,32 +227,102 @@ Delivered v1 spec.
 
 ### Group E — Panel UX quality bar ("wow effect")
 
-These make the previously-deferred UX ask testable where reasonable; exact visual design is the
-implementer's lane, but the following behaviors are required.
+This group makes the previously-deferred UX ask testable. Exact visual values (pixels, spacing,
+motion curves, iconography, exact copy) are the planner's/implementer's lane; the **creative
+direction below is settled**, not open. The direction was informed by reviewing two real
+competitor products (see Ratified decisions and "Competitive research context") **for feature
+and pattern inspiration only — not to imitate their skin or brand**. Where a competitor pattern
+is adopted, it is re-expressed in Vidernu's own distinctive identity.
 
 - **FR-E1 (section-level loading, not a full-panel blocker).** Loading state MUST be confined to
   the phase/section that is generating. While the detail phase is generating, the quick
-  translation MUST remain visible and interactive; the panel MUST NOT replace the whole panel
-  with a single blocking spinner. This **changes** v1 FR-5.20's single whole-panel in-progress
-  indication into per-section in-progress indications.
+  translation (Translation tab) MUST remain visible and interactive; the panel MUST NOT replace
+  the whole panel with a single blocking spinner. This **changes** v1 FR-5.20's single
+  whole-panel in-progress indication into per-section in-progress indications.
 - **FR-E2 (visible stop affordance during generation).** During a generation, a clearly-labeled
   and/or iconed Stop affordance MUST be visible for the running phase, presented alongside or in
   place of that phase's trigger control (FR-C1).
 - **FR-E3 (inline errors with retry).** Errors MUST be shown **inline within the affected
-  section** with the Retry affordance (Group D), without blanking or jarring the rest of the
+  tab/section** with the Retry affordance (Group D), without blanking or jarring the rest of the
   panel.
 - **FR-E4 (clear content-state model, no jank).** The panel MUST present a clear visual
   hierarchy across its content states and transition between them without layout jank (no
   abrupt reflow/flicker that degrades readability). Because translation and breakdown are now
   decoupled, the panel's states include at least: **idle/ready**, **quick-loading**,
-  **quick-result (with detail available)**, **detail-loading (quick result still shown)**, and
-  **result-with-error** (either phase errored). Each MUST be visually distinct and internally
-  consistent.
+  **quick-result (with detail available / detail tabs pending)**, **detail-loading (quick result
+  still shown)**, and **result-with-error** (either phase errored). Each MUST be visually
+  distinct and internally consistent.
 - **FR-E5 (architecture unchanged).** This UX work MUST stay within the existing in-page
   injected-panel architecture that resizes YouTube's `#columns`
   (`adr/2026-07-03-inpage-injected-panel-resizes-youtube-columns.md`); it does NOT revisit that
   decision, introduce an overlay, or move to `chrome.sidePanel`. The video MUST remain fully
   visible in the split view (v1 FR-5.18).
+- **FR-E6 (tab-based section switching — updates/supersedes v1 FR-5.19's stacked display).**
+  The four content areas (Translation, Deconstruction, Context & Meaning, Grammar Notes) MUST be
+  presented as **switchable tabs**, not four permanently stacked sections. This **updates and
+  supersedes only the display arrangement** described in v1 FR-5.19 (four permanently stacked
+  distinct sections); every other aspect of v1 FR-5 — the split view that resizes `#columns`
+  with the video fully visible (FR-5.18), the four content areas' meaning and English-output
+  rule (FR-5.19a–d), source line shown verbatim, graceful degradation of an empty section
+  (FR-5.21) — remains fully in force. Required tab behavior:
+  - The **Translation tab** MUST be populated and active immediately after the quick phase
+    succeeds (FR-A2).
+  - The **Deconstruction**, **Context & Meaning**, and **Grammar Notes** tabs MUST be visibly
+    present but in a **locked/pending** state until the detail phase completes; they then
+    populate **together** (Phase 2 remains a single generation covering all three — this is a
+    display/interaction change, not a re-split of the generation contract; see FR-B1 and
+    Ratified decisions).
+  - The **active tab** MUST be visually distinct from inactive tabs (per the settled palette in
+    FR-E7); the pending/locked detail tabs MUST be visually distinguishable from both active and
+    available-inactive tabs.
+  - Each tab's content SHOULD begin with a short label above its body (a small uppercase,
+    accent-colored heading) so the active section is self-identifying.
+  - Deconstruction rows MUST be presented as individual **token-cards** (romanization/reading,
+    the native-script token in a bordered/tinted box, and its English explanation grouped per
+    token) rather than a plain undelimited table or list. (Pattern adopted from FlixFluent's
+    deconstruction layout; re-expressed in Vidernu's palette per FR-E7.)
+- **FR-E7 (distinctive visual identity — NOT a competitor's palette).** The panel MUST have an
+  original visual identity that is deliberately **not** FlixFluent's (or Netflix's/YouTube's)
+  oversaturated red-on-dark look. Settled creative direction (exact values left to the
+  implementer):
+  - Panel background MUST be a **charcoal/graphite** tone — not pure black, not navy.
+  - **Teal MUST be the single primary accent color** for active/interactive elements: the active
+    tab pill, primary buttons ("Analyze current line", "Show detailed breakdown"), focus states,
+    and token-card accents.
+  - **Red/orange MUST be reserved exclusively for error and stop/destructive states** (inline
+    errors, the Stop control), so those remain visually unambiguous and never collide with the
+    primary brand accent. Non-destructive interactive elements MUST NOT use red/orange as their
+    primary color.
+  - The active tab SHOULD read as a **filled accent-color (teal) pill with light text**;
+    inactive tabs SHOULD read as **muted/dark pills** — the interaction *pattern* borrowed from
+    FlixFluent's tabs, the *color* Vidernu's own.
+- **FR-E8 (persistent local/private indicator).** The panel header MUST display a small,
+  persistent indicator communicating that inference is fully local/private (short copy such as
+  "Local · Private" or equivalent). It MUST be present across all content states (idle through
+  result/error) and MUST NOT be styled as an error/warning (i.e. not red/orange per FR-E7). This
+  surfaces Vidernu's structural advantage — 100% on-device, private, free inference (v1 FR-10) —
+  directly in the UI rather than leaving it buried in an ADR. It is a static informational badge,
+  not an interactive control, and makes no new privacy claim beyond v1's existing guarantee.
+
+## Competitive research context (informational — bounds the creative direction)
+
+Recorded so a future contributor understands *why* the Group E direction is what it is, and does
+not "fix" it by regressing toward a competitor's execution. This is context, not a requirement.
+
+- **FlixFluent** (a similar sidebar-based caption-analysis extension) was reviewed **for
+  feature/pattern inspiration only, explicitly not to copy its visuals or brand**. Two useful
+  patterns were extracted and adopted (re-skinned into Vidernu's identity): (1) presenting the
+  four content areas as **tabs** rather than stacked sections (FR-E6), and (2) rendering
+  deconstruction rows as **token-cards** (FR-E6). Its red-on-dark palette was **deliberately not
+  adopted** (FR-E7).
+- **Language Reactor, and the broader landscape (Trancy, Migaku, Sabi, InterSub)** were reviewed
+  for **market context only**. Their common execution pattern — dense, continuous inline
+  word-level popups and dual-subtitle overlays burned directly onto the video — reflects a
+  **different interaction philosophy** than Vidernu's (one deeply-analyzed line via local LLM,
+  on demand, in a side panel). This pattern was **considered and deliberately not adopted**; it
+  MUST NOT be introduced as a "fix" without a new requirements pass (see "Considered, not
+  adopted"). Vidernu's local/private/free inference is also a structural differentiator (Language
+  Reactor sends data to a server; Trancy paywalls AI parsing) — surfaced via FR-E8.
 
 ## Out of scope
 
@@ -248,6 +337,20 @@ implementer's lane, but the following behaviors are required.
   deferred per v1.
 - Revisiting the panel-injection / `#columns` architecture (FR-E5).
 - Changing the model, device backend, language scope, or English-output rule (v1 FR-8 stands).
+- Copying any competitor's visual identity, palette, or brand (FR-E7); adopting inline
+  per-word popups or dual-subtitle overlays (see "Considered, not adopted").
+
+## Considered, not adopted (documentation only — not a roadmap commitment)
+
+Feature ideas surfaced by the competitive research that are **not part of this change**. Listed
+purely so they are on record and are not mistaken for gaps or oversights. Each would require its
+own future requirements pass before it could be pursued; nothing here is committed or scheduled.
+
+- **Hover-per-word instant dictionary popups** (Language Reactor / Trancy style inline lookups).
+- **Dual-subtitle overlay burned onto the video** (source + translation over the player).
+- **Sentence-mining / Anki flashcard export** of analyzed lines.
+- **Hotkey-based sentence navigation** (jump between caption lines from the keyboard).
+- **Multi-platform support** beyond YouTube (Netflix / Disney+ / Prime Video / Viki).
 
 ## Edge cases
 
@@ -260,11 +363,11 @@ implementer's lane, but the following behaviors are required.
 - **"Show detailed breakdown" clicked, then the video advances to a different caption.** The
   detail phase still analyzes the originally captured line, and the panel still labels the
   result with that line (FR-A4).
-- **Quick phase succeeds, detail phase fails/times out.** Quick translation stays; the detail
-  section shows an inline error with Retry for phase 2 only (FR-D2/FR-D3); the quick result is
-  untouched.
-- **Quick phase fails.** Inline error + Retry for phase 1; the "Show detailed breakdown" trigger
-  is not offered (FR-A5); no detail section is shown.
+- **Quick phase succeeds, detail phase fails/times out.** Quick translation stays on the
+  Translation tab; the detail tabs show an inline error with Retry for phase 2 only
+  (FR-D2/FR-D3); the quick result is untouched.
+- **Quick phase fails.** Inline error + Retry on the Translation tab; the "Show detailed
+  breakdown" trigger is not offered (FR-A5); the detail tabs remain locked/pending and unpopulated.
 - **Retry pressed twice quickly on the same phase.** Must not spawn duplicate concurrent
   generations for that phase nor corrupt state (consistent with the existing double-trigger
   guards); latest attempt governs.
@@ -276,8 +379,8 @@ implementer's lane, but the following behaviors are required.
 - **Unvalidated (non-Korean/Japanese) source language.** Both phases still run best-effort in
   English with the "not fully validated for this language" note (v1 FR-8.31); an unparseable
   phase output falls through to that phase's error state.
-- **Empty section within a valid detail response** (e.g. no grammar rules). That section degrades
-  cleanly ("not available") without breaking layout (v1 FR-5.21) — unchanged.
+- **Empty section within a valid detail response** (e.g. no grammar rules). That section's tab
+  degrades cleanly ("not available") without breaking layout (v1 FR-5.21) — unchanged.
 - **Panel closed/reopened, or YouTube SPA navigation, mid-flow.** No zombie observers or late
   results into a torn-down panel; consistent with v1 panel-lifecycle handling.
 - **Stopping the quick phase, then immediately re-triggering analysis.** The re-trigger starts a
@@ -296,7 +399,7 @@ Binary and testable, in Given/When/Then form.
   detail-phase generation runs (it is never prefetched in the background).
 - **Given** a shown quick translation, **when** the learner activates "Show detailed breakdown",
   **then** a second, separate generation runs and the Deconstruction, Context & Meaning, and
-  Grammar Notes sections render for the same captured line, with the translation still shown.
+  Grammar Notes tabs populate for the same captured line, with the translation still shown.
 - **Given** the video has advanced to a different caption after the quick phase, **when** the
   learner activates "Show detailed breakdown", **then** the detail phase analyzes the originally
   captured line (not the current on-screen caption) and the panel labels the result with that
@@ -313,12 +416,15 @@ Binary and testable, in Given/When/Then form.
   prompt/shape and returns only the translation fields; **and given** a triggered detail phase,
   **when** it runs, **then** it uses the detailed-breakdown prompt/shape and returns only the
   three heavy sections.
+- **Given** a triggered detail phase, **when** its prompt is constructed, **then** the prompt
+  contains the captured source line and phase-2 instructions only, and does **not** embed the
+  Phase-1 translation output (FR-B1a).
 - **Given** either phase's output that cannot be parsed after sanitization/repair, **when** it is
   processed, **then** that phase resolves to a well-formed per-phase error state (not a crash or
   broken layout).
-- **Given** either phase that exceeds its timeout, **when** the timeout elapses, **then** that
-  phase resolves to its per-phase error state rather than hanging, and the other phase's state
-  is unaffected.
+- **Given** either phase that exceeds its `TIMEOUT_MS` (120s) bound, **when** the timeout elapses,
+  **then** that phase resolves to its per-phase error state rather than hanging, and the other
+  phase's state is unaffected.
 - **Given** the change is implemented, **when** the PR is reviewed, **then** it includes an ADR
   recording the split of the inference contract into two request/response shapes and stating
   whether it extends or supersedes the v1 ADRs.
@@ -339,13 +445,13 @@ Binary and testable, in Given/When/Then form.
 
 **Retry (Group D)**
 - **Given** a failed quick phase (error, empty/garbled, or timeout), **when** the panel renders,
-  **then** an inline Retry appears on the quick-translation area and no detail trigger is
-  offered; **when** the learner clicks Retry, **then** only the quick phase re-runs for the same
-  captured line and the prior error state is cleared.
+  **then** an inline Retry appears on the Translation tab and no detail trigger is offered;
+  **when** the learner clicks Retry, **then** only the quick phase re-runs for the same captured
+  line and the prior error state is cleared.
 - **Given** a failed detail phase while the quick phase succeeded, **when** the panel renders,
-  **then** an inline Retry appears on the detail-breakdown area only, the quick translation stays
-  visible; **when** the learner clicks Retry, **then** only the detail phase re-runs and the
-  quick translation is neither re-run nor discarded.
+  **then** an inline Retry appears on the detail tabs only, the quick translation stays visible;
+  **when** the learner clicks Retry, **then** only the detail phase re-runs and the quick
+  translation is neither re-run nor discarded.
 - **Given** a Retry-triggered generation, **when** it is in flight, **then** it is itself
   stoppable and bounded by the per-phase timeout, and can re-offer Retry if it fails again.
 - **Given** Retry is pressed twice quickly for the same phase, **when** handled, **then** no
@@ -353,13 +459,27 @@ Binary and testable, in Given/When/Then form.
 
 **UX quality bar (Group E)**
 - **Given** a detail phase generating, **when** the panel renders, **then** loading is confined to
-  the detail section, the quick translation stays visible and interactive, and there is no
-  full-panel blocking spinner.
+  the detail tabs, the quick translation stays visible and interactive on its tab, and there is
+  no full-panel blocking spinner.
 - **Given** an error in one phase, **when** it renders, **then** the error and its Retry appear
-  inline within that phase's section and the other phase's content is not blanked or disrupted.
+  inline within that phase's tab/section and the other phase's content is not blanked or disrupted.
 - **Given** transitions between idle, quick-loading, quick-result, detail-loading, and error
   states, **when** the panel updates, **then** each state is visually distinct and transitions do
   not produce jarring layout jank.
+- **Given** a successful quick phase, **when** the panel renders, **then** the four content areas
+  appear as tabs (not stacked sections): the Translation tab is active and populated, and the
+  Deconstruction / Context & Meaning / Grammar Notes tabs are visibly present but in a
+  locked/pending state until the detail phase completes, at which point they populate together.
+- **Given** a rendered detailed breakdown, **when** the Deconstruction tab is shown, **then** its
+  rows appear as individual token-cards (token in a bordered/tinted box with reading and English
+  explanation grouped per token), not as a plain undelimited table/list.
+- **Given** the panel in any content state, **when** it renders, **then** the active tab / primary
+  interactive elements use the teal primary accent, red/orange is used only for error and
+  stop/destructive states, and the background is a charcoal/graphite (not pure black, navy, or a
+  red-on-dark competitor palette).
+- **Given** the panel in any content state (idle through result/error), **when** it renders,
+  **then** the persistent local/private indicator is visible in the header and is not styled as
+  an error/warning.
 - **Given** any state of this flow, **when** the panel is shown, **then** the YouTube video
   remains fully visible in the resized `#columns` split view (no overlay, no architecture
   change).
@@ -367,7 +487,8 @@ Binary and testable, in Given/When/Then form.
 ## Non-functional requirements
 
 - **Privacy (overriding, unchanged).** Both phases run on-device via WebGPU; no subtitle text,
-  prompt, or output for either phase is transmitted off-device (v1 FR-10).
+  prompt, or output for either phase is transmitted off-device (v1 FR-10). The FR-E8 indicator
+  restates this guarantee in the UI; it introduces no new claim.
 - **Responsiveness.** The quick phase exists to deliver the translation with materially less wait
   than the v1 combined generation; the panel MUST give immediate per-section in-progress feedback
   and MUST never appear frozen. Exact latency depends on device GPU (not guaranteed to a fixed
@@ -377,13 +498,17 @@ Binary and testable, in Given/When/Then form.
 - **Reliability / graceful degradation.** Every failure mode above resolves to a clear per-phase
   UI state — never a crash, hang, or broken layout; a failure in one phase never corrupts the
   other's state.
-- **Accessibility.** The new Stop, "Show detailed breakdown", and Retry controls MUST be
-  keyboard-operable with clear labels; state changes (loading → result/error) SHOULD be
-  announced to assistive tech (e.g. a polite live region) so a non-visual user knows a phase
-  finished or failed. Contrast and resizable text per v1 accessibility NFR.
+- **Accessibility.** The new tabs, Stop, "Show detailed breakdown", and Retry controls MUST be
+  keyboard-operable with clear labels; tabs MUST expose their selected/pending/disabled state to
+  assistive tech; state changes (loading → result/error) SHOULD be announced to assistive tech
+  (e.g. a polite live region) so a non-visual user knows a phase finished or failed. The teal
+  accent and charcoal background MUST meet the contrast and resizable-text requirements of the
+  v1 accessibility NFR; color MUST NOT be the sole signal distinguishing error/stop states from
+  interactive ones (pair with icon/label/text).
 - **Testability.** Pure logic (the two schemas' validators, the two prompt builders, message
-  type guards, phase/state derivation) MUST be unit-testable without `chrome.*`; add
-  failing-first tests for the contract split and the stop/retry state transitions.
+  type guards, phase/state derivation, active/pending tab derivation) MUST be unit-testable
+  without `chrome.*`; add failing-first tests for the contract split and the stop/retry state
+  transitions.
 - **Quality gate.** `just check` MUST pass.
 - **No regressions.** The model-load lifecycle, badge state machine, latest-wins supersession,
   and the load-timeout / model-load Retry from the two Delivered specs MUST continue to work; the
@@ -393,38 +518,57 @@ Binary and testable, in Given/When/Then form.
   redesign, consistent with the message-contract conventions already in `src/shared/messages.ts`
   — but this is guidance, not a constraint on the ADR's chosen shape.
 
+## Ratified decisions
+
+Decisions confirmed by the owner and now binding on the plan/implementation. These resolve the
+questions this spec surfaced; the "(see Ratified decisions)" references throughout point here.
+
+1. **Two-phase, on-demand flow.** Clicking "Analyze current line" runs the quick (translation)
+   phase automatically; the detail (deconstruction + context + grammar) phase runs **only** on an
+   explicit "Show detailed breakdown" action — never prefetched or run in the background
+   (FR-A1/FR-A3).
+2. **Single Phase-2 generation.** The three heavy sections are produced by **one** detail-phase
+   generation (one call → deconstruction + context + grammar), not three separate calls
+   (FR-B1). The tab-based display (decision 7) does not re-split this.
+3. **Phase-2 prompt is independent — no Phase-1 context.** The detail phase runs independently
+   over the captured source line only and does **not** receive the Phase-1 translation as
+   grounding/context (FR-B1a). (Resolves the prior MEDIUM open question; the owner accepted the
+   recommended default of a fully independent second generation.)
+4. **Per-phase timeout = existing `TIMEOUT_MS` (120s) for both phases.** Both phases reuse the
+   current 120s per-analysis bound; no separate or shorter quick-phase cap is introduced
+   (FR-B3). (Resolves the prior LOW open question with the recommended default.)
+5. **No token-by-token streaming of the JSON response.** Each phase is a discrete
+   request → complete-response generation; the sanitize/repair pipeline operates on a complete
+   response only (FR-A6).
+6. **Soft/cooperative stop.** Stop halts generation at the next token boundary (no hard
+   GPU-level abort); stopped output never surfaces (FR-C3/FR-C5).
+7. **Tab-based display + distinctive identity + local/private badge (creative direction, settled).**
+   The four content areas are shown as switchable tabs (Translation active after Phase 1; the
+   three detail tabs locked/pending until Phase 2), **updating/superseding only v1 FR-5.19's
+   stacked-section display** while keeping the rest of v1 FR-5 intact (FR-E6). Visual identity is
+   charcoal/graphite with teal as the single primary accent and red/orange reserved for
+   error/stop states (FR-E7). A persistent "Local · Private" (or equivalent) header indicator is
+   added (FR-E8). Patterns (tabs, token-cards) were drawn from FlixFluent for **feature
+   reference only**, not visual imitation; the inline-popup / dual-subtitle-overlay philosophy of
+   Language Reactor and peers was considered and deliberately **not** adopted (see "Competitive
+   research context" and "Considered, not adopted").
+
 ## Assumptions & open questions
 
-Settled items from the confirmed Q&A are recorded under "Ratified decisions". The items below
-are this spec's own newly-surfaced questions and accepted defaults, ranked by impact. Per the
-gate, this spec is **Draft** until the outstanding `[OPEN QUESTION]` items are resolved or
-explicitly accepted.
+All questions this spec surfaced have been resolved (see "Ratified decisions"); no open question
+remains. The items below are low-impact UI assumptions the owner has accepted as sensible
+defaults; each is reversible and none blocks acceptance.
 
-- `[OPEN QUESTION | MEDIUM]` **Does the detail-phase (Phase 2) prompt receive the Phase-1
-  translation as grounding context, or is it fully independent over the source line?** Both are
-  compatible with single-turn statelessness (feeding the translation as prompt *text* is not
-  KV-cache/history accumulation). Feeding it in could make the breakdown more consistent with the
-  shown translation; keeping Phase 2 independent keeps prompts smaller and truly "separate".
-  **Recommended default:** Phase 2 is **independent over the captured source line only** (no
-  Phase-1 output injected), matching the owner's "second, separate generation" framing; the
-  planner MAY pass the translation as read-only context if it demonstrably improves coherence
-  without bloating the prompt. → routed as **NEEDS DECISION**.
-- `[OPEN QUESTION | LOW]` **Per-phase timeout values.** **Recommended default:** reuse the
-  existing single per-analysis `TIMEOUT_MS` (120s) as the bound for *each* phase; optionally the
-  planner introduces a shorter bound for the quick phase (since it is a smaller prompt) to keep
-  "quick things first" honest. Non-foreclosing; flagging in case the owner wants a specific quick
-  cap. → routed as **NEEDS DECISION** (low).
-- `[ASSUMPTION | LOW]` **Stopping the quick phase clears the analyzed-line label** and returns to
-  a clean "ready to analyze" state (no partial result shown), rather than retaining the
-  in-progress line label with an empty result. Reversible UI detail.
-- `[ASSUMPTION | LOW]` **A fresh "Analyze current line" while a detail breakdown is shown
-  replaces the whole panel content** (both sections) for the new line — the previous line's
-  translation and breakdown are cleared, consistent with latest-wins (FR-A8).
-- `[ASSUMPTION | LOW]` **The three heavy sections are produced by a single Phase-2 generation**
-  (one call → deconstruction + context + grammar), not three separate calls. This matches the
-  owner's framing and keeps the on-demand cost to one extra generation.
-- `[ASSUMPTION | LOW]` **Exact visual design (spacing, motion, iconography, copy) is the
-  implementer's lane**, guided by Group E and "insight from production-ready applications"; this
-  spec sets behavioral requirements, not a pixel spec.
-- `[ASSUMPTION | LOW]` **Collapse/expand of an already-rendered detail breakdown, if offered, is a
-  pure-UI nicety** with no new generation (FR-A9); not required for acceptance.
+- `[ASSUMPTION | accepted-by-user | LOW]` **Stopping the quick phase clears the analyzed-line
+  label** and returns to a clean "ready to analyze" state (no partial result shown), rather than
+  retaining the in-progress line label with an empty result.
+- `[ASSUMPTION | accepted-by-user | LOW]` **A fresh "Analyze current line" while a detail
+  breakdown is shown replaces the whole panel content** (all tabs) for the new line — the
+  previous line's translation and breakdown are cleared, consistent with latest-wins (FR-A8).
+- `[ASSUMPTION | accepted-by-user | LOW]` **Exact visual values (spacing, motion, iconography,
+  exact copy, precise teal/charcoal hex) are the implementer's lane**, guided by Group E's
+  settled creative direction; this spec sets behavioral and directional requirements, not a
+  pixel spec.
+- `[ASSUMPTION | accepted-by-user | LOW]` **Collapse/expand of an already-rendered detail
+  breakdown, if offered, is a pure-UI nicety** with no new generation (FR-A9); not required for
+  acceptance.
