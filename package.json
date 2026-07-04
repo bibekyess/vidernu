@@ -13,7 +13,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@huggingface/transformers": "3.8.1"
+    "@huggingface/transformers": "^4.2.0"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "2.7.1",
