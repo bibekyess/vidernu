@@ -7,6 +7,66 @@ import { type AnalysisResult, validateAnalysis } from "./schema";
 
 const CODE_FENCE_RE = /```(?:json)?\s*([\s\S]*?)\s*```/i;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function extractGeneratedText(output: unknown): string {
+  if (Array.isArray(output)) {
+    let fallback = "";
+
+    for (const item of output) {
+      const candidate = extractGeneratedText(item);
+      if (candidate && !fallback) {
+        fallback = candidate;
+      }
+    }
+
+    return fallback;
+  }
+
+  if (isRecord(output)) {
+    const generatedText = output.generated_text;
+    if (typeof generatedText === "string") {
+      return generatedText;
+    }
+
+    if (Array.isArray(generatedText)) {
+      let fallbackText = "";
+
+      for (const item of generatedText) {
+        if (isRecord(item)) {
+          const role = typeof item.role === "string" ? item.role : undefined;
+          const content = typeof item.content === "string" ? item.content : undefined;
+
+          if (content && role === "assistant") {
+            return content;
+          }
+
+          if (content && !fallbackText) {
+            fallbackText = content;
+          }
+        }
+      }
+
+      return fallbackText;
+    }
+
+    if (typeof output.role === "string" || typeof output.content === "string") {
+      const role = typeof output.role === "string" ? output.role : undefined;
+      const content = typeof output.content === "string" ? output.content : undefined;
+      if (content && role === "assistant") {
+        return content;
+      }
+      if (content) {
+        return content;
+      }
+    }
+  }
+
+  return "";
+}
+
 /** Strips ```json / ``` fenced blocks, returning the inner content if found. */
 function stripFences(raw: string): string {
   const match = CODE_FENCE_RE.exec(raw);

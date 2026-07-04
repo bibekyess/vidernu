@@ -12,7 +12,7 @@ import {
 
 import { MAX_NEW_TOKENS, TEMPERATURE } from "../shared/constants";
 import { buildPrompt } from "../shared/prompt";
-import { sanitizeAndParse } from "../shared/sanitize";
+import { extractGeneratedText, sanitizeAndParse } from "../shared/sanitize";
 import { type AnalysisError, type AnalysisResult, makeAnalysisError } from "../shared/schema";
 import { getPipeline } from "./model";
 
@@ -22,7 +22,7 @@ import { getPipeline } from "./model";
 const SUPERSESSION_POLL_MS = 200;
 
 // Flip to false once the structured-output issue is diagnosed.
-const DEBUG_INFERENCE = true;
+const DEBUG_INFERENCE = false;
 
 const LOG = "[Vidernu][inference]";
 
@@ -38,7 +38,9 @@ export async function runInference(
 ): Promise<AnalysisResult | AnalysisError> {
   // Always log at the start so "was runInference even called?" is answerable
   // without enabling Verbose level in DevTools (console.debug is hidden by default).
-  console.log(LOG, "runInference called — text:", text, "lang:", lang);
+  if (DEBUG_INFERENCE) {
+    console.log(LOG, "runInference called — text:", text, "lang:", lang);
+  }
 
   const generator = await getPipeline();
   const messages = buildPrompt(text, lang);
@@ -82,12 +84,13 @@ export async function runInference(
       console.log(LOG, "raw output object:", output);
     }
 
-    const first = Array.isArray(output) ? output[0] : undefined;
-    const generatedText = typeof first?.generated_text === "string" ? first.generated_text : "";
+    const generatedText = extractGeneratedText(output);
 
     // Log the raw model text before any superseded/parse branch so a
     // timed-out or interrupted generation still shows what was produced.
-    console.log(LOG, "generatedText (raw model output):", generatedText);
+    if (DEBUG_INFERENCE) {
+      console.log(LOG, "generatedText (raw model output):", generatedText);
+    }
 
     if (isSuperseded()) {
       console.log(LOG, "superseded after generation — discarding result");

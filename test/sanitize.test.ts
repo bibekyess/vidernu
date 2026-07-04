@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sanitizeAndParse } from "../src/shared/sanitize";
+import { extractGeneratedText, sanitizeAndParse } from "../src/shared/sanitize";
 
 const VALID_OBJECT = {
   translation: { literal: "lit", natural: "nat" },
@@ -55,5 +55,48 @@ describe("sanitizeAndParse", () => {
 
   it("returns null when the JSON parses but fails schema validation", () => {
     expect(sanitizeAndParse(JSON.stringify({ foo: "bar" }))).toBeNull();
+  });
+
+  it("extracts assistant content from chat-style generated_text arrays", () => {
+    const output = [
+      {
+        generated_text: [
+          { role: "user", content: "prompt" },
+          { role: "assistant", content: JSON.stringify(VALID_OBJECT) },
+        ],
+      },
+    ];
+    expect(extractGeneratedText(output)).toBe(JSON.stringify(VALID_OBJECT));
+  });
+
+  it("parses end-to-end from a chat-style generated_text array", () => {
+    const output = [
+      {
+        generated_text: [
+          { role: "user", content: "prompt" },
+          { role: "assistant", content: JSON.stringify(VALID_OBJECT) },
+        ],
+      },
+    ];
+    expect(sanitizeAndParse(extractGeneratedText(output))).toEqual(VALID_OBJECT);
+  });
+
+  it("still handles a plain string generated_text (non-chat shape)", () => {
+    const output = [{ generated_text: JSON.stringify(VALID_OBJECT) }];
+    const text = extractGeneratedText(output);
+    expect(text).toBe(JSON.stringify(VALID_OBJECT));
+    expect(sanitizeAndParse(text)).toEqual(VALID_OBJECT);
+  });
+
+  it("falls back to the user turn when no assistant turn is present", () => {
+    const output = [{ generated_text: [{ role: "user", content: "prompt" }] }];
+    const text = extractGeneratedText(output);
+    expect(text).toBe("prompt");
+    expect(sanitizeAndParse(text)).toBeNull();
+  });
+
+  it("returns an empty string for empty/garbage input", () => {
+    expect(extractGeneratedText([])).toBe("");
+    expect(extractGeneratedText({})).toBe("");
   });
 });
