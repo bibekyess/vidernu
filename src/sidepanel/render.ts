@@ -13,6 +13,8 @@ export interface PanelElements {
   modelState: HTMLElement;
   // Dedicated load-error area — shows the real error detail + hint + Retry (FR-4/FR-14).
   loadError: HTMLElement;
+  // Explicit reference avoids brittle DOM-order querySelector("p") inside loadError.
+  loadErrorDetail: HTMLElement;
   loadErrorRetry: HTMLButtonElement;
   fallbackBanner: HTMLElement;
   advisoryBanner: HTMLElement;
@@ -58,7 +60,7 @@ export function renderSkeleton(container: HTMLElement): PanelElements {
   // from the analysis-result error in sections (FR-4). Hidden until an error occurs.
   const loadError = el("div", "vidernu-load-error");
   loadError.hidden = true;
-  const loadErrorDetail = el("p");
+  const loadErrorDetail = el("p", "vidernu-load-error-detail");
   loadError.appendChild(loadErrorDetail);
   loadError.appendChild(
     el("p", "vidernu-error-hint", "Try clicking Retry, or reload the extension if this persists."),
@@ -99,6 +101,7 @@ export function renderSkeleton(container: HTMLElement): PanelElements {
     captionHint,
     modelState,
     loadError,
+    loadErrorDetail,
     loadErrorRetry,
     fallbackBanner,
     advisoryBanner,
@@ -274,12 +277,10 @@ export function setLoadError(els: PanelElements, detail: string | null): void {
   if (!detail) {
     els.loadError.hidden = true;
     // Reset the detail text so it cannot leak into a later error render.
-    const detailEl = els.loadError.querySelector("p");
-    if (detailEl) detailEl.textContent = "";
+    els.loadErrorDetail.textContent = "";
     return;
   }
-  const detailEl = els.loadError.querySelector("p");
-  if (detailEl) detailEl.textContent = detail;
+  els.loadErrorDetail.textContent = detail;
   els.loadError.hidden = false;
 }
 

@@ -87,3 +87,34 @@ describe("render: dedicated load-error area (Section A)", () => {
     expect(els.loadError.contains(els.loadErrorRetry)).toBe(true);
   });
 });
+
+// P3 fix — explicit loadErrorDetail reference (brittle DOM-order selector).
+describe("render: setLoadError uses the explicit loadErrorDetail element (P3)", () => {
+  it("skeleton exposes loadErrorDetail as a named PanelElements field", () => {
+    const container = document.createElement("div");
+    const els = renderSkeleton(container);
+    expect(els.loadErrorDetail).toBeDefined();
+    expect(els.loadErrorDetail.tagName).toBe("P");
+    expect(els.loadErrorDetail.className).toBe("vidernu-load-error-detail");
+  });
+
+  it("setLoadError writes the detail text into loadErrorDetail, not the hint paragraph", () => {
+    const container = document.createElement("div");
+    const els = renderSkeleton(container);
+    setLoadError(els, "disk quota exceeded");
+    // The named element carries the error text.
+    expect(els.loadErrorDetail.textContent).toBe("disk quota exceeded");
+    // The hint paragraph (vidernu-error-hint) is unaffected.
+    const hint = els.loadError.querySelector(".vidernu-error-hint");
+    expect(hint?.textContent).not.toContain("disk quota exceeded");
+  });
+
+  it("setLoadError(null) clears the detail text regardless of paragraph insertion order", () => {
+    const container = document.createElement("div");
+    const els = renderSkeleton(container);
+    setLoadError(els, "some error");
+    setLoadError(els, null);
+    // The named element is cleared directly — not via a positional querySelector("p").
+    expect(els.loadErrorDetail.textContent).toBe("");
+  });
+});

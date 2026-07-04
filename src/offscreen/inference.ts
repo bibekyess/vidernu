@@ -6,8 +6,8 @@
 import {
   InterruptableStoppingCriteria,
   StoppingCriteriaList,
-  type TextGenerationConfig,
   type TextGenerationOutput,
+  type TextGenerationPipeline,
 } from "@huggingface/transformers";
 
 import { MAX_NEW_TOKENS, TEMPERATURE } from "../shared/constants";
@@ -42,20 +42,19 @@ export async function runInference(
     if (isSuperseded()) criteria.interrupt();
   }, SUPERSESSION_POLL_MS);
 
-  // `stopping_criteria` is accepted by transformers.js's generate() at
-  // runtime but is missing from the published TextGenerationConfig types;
-  // routing it through a typed local variable (rather than an inline object
-  // literal) avoids fighting excess-property checking for a field that
-  // genuinely exists on the underlying JS API.
-  const generateOptions: Partial<TextGenerationConfig> & {
-    stopping_criteria: StoppingCriteriaList;
-  } = {
+  // `stopping_criteria` is accepted by transformers.js's generate() at runtime
+  // but TextGenerationConfig is an internal typedef not re-exported from the
+  // package root, so we derive the pipeline's second-argument type structurally
+  // and cast the extra field in. This keeps the known fields type-checked while
+  // suppressing the excess-property error for a field that genuinely exists.
+  type PipelineOptions = Parameters<TextGenerationPipeline["_call"]>[1];
+  const generateOptions: PipelineOptions & { stopping_criteria: StoppingCriteriaList } = {
     max_new_tokens: MAX_NEW_TOKENS,
     do_sample: true,
     temperature: TEMPERATURE,
     return_full_text: false,
     stopping_criteria: stoppingCriteria,
-  };
+  } as PipelineOptions & { stopping_criteria: StoppingCriteriaList };
 
   try {
     const output = (await generator(messages, generateOptions)) as TextGenerationOutput;

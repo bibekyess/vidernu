@@ -4,7 +4,12 @@
  * library, so a later session does not re-download them (FR-1.1/1.2) and a
  * storage eviction simply triggers a fresh fetch next time (edge case).
  */
-import { env, pipeline, type TextGenerationPipelineType } from "@huggingface/transformers";
+import {
+  env,
+  pipeline,
+  type ProgressInfo,
+  type TextGenerationPipeline,
+} from "@huggingface/transformers";
 
 import {
   DEVICE,
@@ -14,21 +19,10 @@ import {
   type ModelStatus,
 } from "../shared/constants";
 
-// transformers.js does not re-export its internal `ProgressInfo` union from
-// the package root, so it is reproduced narrowly here (see
-// utils/core.js in @huggingface/transformers for the source shape).
-interface ProgressInfo {
-  status: "initiate" | "download" | "progress" | "done" | "ready";
-  file?: string;
-  progress?: number;
-  loaded?: number;
-  total?: number;
-}
-
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
-let pipelinePromise: Promise<TextGenerationPipelineType> | null = null;
+let pipelinePromise: Promise<TextGenerationPipeline> | null = null;
 
 export interface LoadProgress {
   status: ModelStatus;
@@ -76,7 +70,7 @@ function toLoadProgress(info: ProgressInfo): LoadProgress | null {
  * scratch rather than permanently wedging in an error state (edge case:
  * network drop / corrupt weights).
  */
-export function loadModel(onProgress: ProgressListener): Promise<TextGenerationPipelineType> {
+export function loadModel(onProgress: ProgressListener): Promise<TextGenerationPipeline> {
   if (pipelinePromise) return pipelinePromise;
 
   pipelinePromise = pipeline("text-generation", MODEL_ID, {
@@ -95,7 +89,7 @@ export function loadModel(onProgress: ProgressListener): Promise<TextGenerationP
 }
 
 /** The already-resolved pipeline, if loaded; throws if `loadModel` hasn't completed. */
-export async function getPipeline(): Promise<TextGenerationPipelineType> {
+export async function getPipeline(): Promise<TextGenerationPipeline> {
   if (!pipelinePromise) {
     throw new Error("Model has not been loaded yet.");
   }
