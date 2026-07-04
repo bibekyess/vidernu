@@ -9,6 +9,18 @@
  * threaded through every message of one analysis and is the mechanism
  * behind latest-wins supersession (FR-17).
  *
+ * `phase` (added for the 2026-07-04 two-phase split — see
+ * adr/2026-07-04-two-phase-split-inference-contract.md) discriminates
+ * which of the two independent generations a message belongs to: "quick"
+ * (translation only) or "detail" (deconstruction + context + grammar). It
+ * is a required field on every analysis-flow message — this is a
+ * pre-release internal contract with no external consumer.
+ *
+ * `STOP_ANALYSIS`/`STOP_INFERENCE` (FR-C, see
+ * adr/2026-07-04-user-initiated-cooperative-stop.md) extend the same
+ * latest-wins supersession plumbing with an explicit user-initiated cancel
+ * marker rather than introducing a parallel cancellation mechanism.
+ *
  * Caption capture never crosses a process boundary: because the panel is
  * injected directly into the YouTube page by the content script (rather
  * than hosted as a separate `chrome.sidePanel` page), the content script
@@ -16,16 +28,28 @@
  * already-captured text as part of `ANALYZE_REQUEST` — there is no
  * `CAPTURE_CAPTION` round trip through the service worker.
  */
-import type { AnalysisError, AnalysisResult } from "./schema";
+import type { AnalysisError, DetailResult, QuickResult } from "./schema";
 
 export type ModelStatusValue = "standby" | "downloading" | "loading" | "ready" | "error";
+
+/** Which of the two independent generations a message belongs to (FR-B1). */
+export type AnalysisPhase = "quick" | "detail";
 
 // Content script (panel) -> SW
 export interface AnalyzeRequest {
   type: "ANALYZE_REQUEST";
   requestId: number;
+  phase: AnalysisPhase;
   text: string;
   lang?: string;
+}
+
+// Content script (panel) -> SW: cancel whichever generation `requestId`
+// refers to (FR-C1/C2).
+export interface StopAnalysis {
+  type: "STOP_ANALYSIS";
+  requestId: number;
+  phase: AnalysisPhase;
 }
 
 export interface GetState {
@@ -45,8 +69,15 @@ export interface LoadModel {
 export interface RunInference {
   type: "RUN_INFERENCE";
   requestId: number;
+  phase: AnalysisPhase;
   text: string;
   lang?: string;
+}
+
+// SW -> offscreen: relay of STOP_ANALYSIS (FR-C6).
+export interface StopInference {
+  type: "STOP_INFERENCE";
+  requestId: number;
 }
 
 // offscreen -> SW (pushed)
@@ -67,10 +98,12 @@ export interface CapabilityMsg {
 export interface InferenceResult {
   type: "INFERENCE_RESULT";
   requestId: number;
-  result: AnalysisResult | AnalysisError;
-  // Set when a newer RUN_INFERENCE has already superseded this one (FR-17
-  // latest-wins); lets the service worker drop its pendingAnalyses entry
-  // without relaying a stale result to the tab.
+  phase: AnalysisPhase;
+  result: QuickResult | DetailResult | AnalysisError;
+  // Set when a newer RUN_INFERENCE has already superseded this one, or when
+  // the request was explicitly stopped (FR-17 latest-wins / FR-C5); lets the
+  // service worker drop its pendingAnalyses entry without relaying a stale
+  // result to the tab.
   superseded?: boolean;
 }
 
@@ -89,16 +122,19 @@ export interface StateSnapshot {
 export interface AnalysisResultMsg {
   type: "ANALYSIS_RESULT";
   requestId: number;
+  phase: AnalysisPhase;
   analyzedLine: string;
-  result: AnalysisResult | AnalysisError;
+  result: QuickResult | DetailResult | AnalysisError;
 }
 
 export type Message =
   | AnalyzeRequest
+  | StopAnalysis
   | GetState
   | TogglePanel
   | LoadModel
   | RunInference
+  | StopInference
   | ModelStatusMsg
   | CapabilityMsg
   | InferenceResult
@@ -117,13 +153,29 @@ function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
+const ANALYSIS_PHASES: readonly AnalysisPhase[] = ["quick", "detail"];
+
+export function isAnalysisPhase(value: unknown): value is AnalysisPhase {
+  return isString(value) && (ANALYSIS_PHASES as readonly string[]).includes(value);
+}
+
 export function isAnalyzeRequest(value: unknown): value is AnalyzeRequest {
   return (
     isRecord(value) &&
     value.type === "ANALYZE_REQUEST" &&
     isNumber(value.requestId) &&
+    isAnalysisPhase(value.phase) &&
     isString(value.text) &&
     (value.lang === undefined || isString(value.lang))
+  );
+}
+
+export function isStopAnalysis(value: unknown): value is StopAnalysis {
+  return (
+    isRecord(value) &&
+    value.type === "STOP_ANALYSIS" &&
+    isNumber(value.requestId) &&
+    isAnalysisPhase(value.phase)
   );
 }
 
@@ -144,9 +196,14 @@ export function isRunInference(value: unknown): value is RunInference {
     isRecord(value) &&
     value.type === "RUN_INFERENCE" &&
     isNumber(value.requestId) &&
+    isAnalysisPhase(value.phase) &&
     isString(value.text) &&
     (value.lang === undefined || isString(value.lang))
   );
+}
+
+export function isStopInference(value: unknown): value is StopInference {
+  return isRecord(value) && value.type === "STOP_INFERENCE" && isNumber(value.requestId);
 }
 
 const MODEL_STATUS_VALUES: readonly ModelStatusValue[] = [
@@ -186,6 +243,7 @@ export function isInferenceResult(value: unknown): value is InferenceResult {
     isRecord(value) &&
     value.type === "INFERENCE_RESULT" &&
     isNumber(value.requestId) &&
+    isAnalysisPhase(value.phase) &&
     (value.superseded === undefined || typeof value.superseded === "boolean")
   );
 }
@@ -207,6 +265,7 @@ export function isAnalysisResultMsg(value: unknown): value is AnalysisResultMsg 
     isRecord(value) &&
     value.type === "ANALYSIS_RESULT" &&
     isNumber(value.requestId) &&
+    isAnalysisPhase(value.phase) &&
     isString(value.analyzedLine)
   );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isAnalysisPhase,
   isAnalyzeRequest,
   isAnalysisResultMsg,
   isCapabilityMsg,
@@ -10,19 +11,59 @@ import {
   isModelStatusMsg,
   isRunInference,
   isStateSnapshot,
+  isStopAnalysis,
+  isStopInference,
   isTogglePanel,
 } from "../src/shared/messages";
 
 describe("message type guards", () => {
+  it("isAnalysisPhase accepts quick/detail and rejects anything else", () => {
+    expect(isAnalysisPhase("quick")).toBe(true);
+    expect(isAnalysisPhase("detail")).toBe(true);
+    expect(isAnalysisPhase("bogus")).toBe(false);
+    expect(isAnalysisPhase(undefined)).toBe(false);
+  });
+
   it("isAnalyzeRequest accepts valid and rejects malformed payloads", () => {
-    expect(isAnalyzeRequest({ type: "ANALYZE_REQUEST", requestId: 1, text: "hi" })).toBe(true);
     expect(
-      isAnalyzeRequest({ type: "ANALYZE_REQUEST", requestId: 1, text: "hi", lang: "ko" }),
+      isAnalyzeRequest({ type: "ANALYZE_REQUEST", requestId: 1, phase: "quick", text: "hi" }),
     ).toBe(true);
-    expect(isAnalyzeRequest({ type: "ANALYZE_REQUEST", text: "hi" })).toBe(false); // missing requestId
-    expect(isAnalyzeRequest({ type: "ANALYZE_REQUEST", requestId: "1", text: "hi" })).toBe(false);
-    expect(isAnalyzeRequest({ type: "WRONG_TYPE", requestId: 1, text: "hi" })).toBe(false);
+    expect(
+      isAnalyzeRequest({
+        type: "ANALYZE_REQUEST",
+        requestId: 1,
+        phase: "detail",
+        text: "hi",
+        lang: "ko",
+      }),
+    ).toBe(true);
+    expect(isAnalyzeRequest({ type: "ANALYZE_REQUEST", phase: "quick", text: "hi" })).toBe(false); // missing requestId
+    expect(
+      isAnalyzeRequest({ type: "ANALYZE_REQUEST", requestId: "1", phase: "quick", text: "hi" }),
+    ).toBe(false);
+    expect(isAnalyzeRequest({ type: "ANALYZE_REQUEST", requestId: 1, text: "hi" })).toBe(false); // missing phase
+    expect(
+      isAnalyzeRequest({ type: "ANALYZE_REQUEST", requestId: 1, phase: "bogus", text: "hi" }),
+    ).toBe(false);
+    expect(isAnalyzeRequest({ type: "WRONG_TYPE", requestId: 1, phase: "quick", text: "hi" })).toBe(
+      false,
+    );
     expect(isAnalyzeRequest(null)).toBe(false);
+  });
+
+  it("isStopAnalysis accepts valid and rejects malformed payloads", () => {
+    expect(isStopAnalysis({ type: "STOP_ANALYSIS", requestId: 1, phase: "quick" })).toBe(true);
+    expect(isStopAnalysis({ type: "STOP_ANALYSIS", requestId: 1, phase: "detail" })).toBe(true);
+    expect(isStopAnalysis({ type: "STOP_ANALYSIS", phase: "quick" })).toBe(false); // missing requestId
+    expect(isStopAnalysis({ type: "STOP_ANALYSIS", requestId: 1 })).toBe(false); // missing phase
+    expect(isStopAnalysis({ type: "STOP_ANALYSIS", requestId: 1, phase: "bogus" })).toBe(false);
+    expect(isStopAnalysis(null)).toBe(false);
+  });
+
+  it("isStopInference accepts valid and rejects malformed payloads", () => {
+    expect(isStopInference({ type: "STOP_INFERENCE", requestId: 1 })).toBe(true);
+    expect(isStopInference({ type: "STOP_INFERENCE" })).toBe(false);
+    expect(isStopInference({ type: "STOP_INFERENCE", requestId: "1" })).toBe(false);
   });
 
   it("isGetState accepts only its own type", () => {
@@ -41,9 +82,14 @@ describe("message type guards", () => {
   });
 
   it("isRunInference accepts valid and rejects malformed payloads", () => {
-    expect(isRunInference({ type: "RUN_INFERENCE", requestId: 1, text: "hi" })).toBe(true);
-    expect(isRunInference({ type: "RUN_INFERENCE", requestId: 1 })).toBe(false); // missing text
-    expect(isRunInference({ type: "RUN_INFERENCE", requestId: 1, text: 5 })).toBe(false);
+    expect(
+      isRunInference({ type: "RUN_INFERENCE", requestId: 1, phase: "quick", text: "hi" }),
+    ).toBe(true);
+    expect(isRunInference({ type: "RUN_INFERENCE", requestId: 1, phase: "quick" })).toBe(false); // missing text
+    expect(isRunInference({ type: "RUN_INFERENCE", requestId: 1, phase: "quick", text: 5 })).toBe(
+      false,
+    );
+    expect(isRunInference({ type: "RUN_INFERENCE", requestId: 1, text: "hi" })).toBe(false); // missing phase
   });
 
   it("isModelStatusMsg accepts each known status and rejects unknown ones", () => {
@@ -68,7 +114,10 @@ describe("message type guards", () => {
   });
 
   it("isInferenceResult accepts valid and rejects malformed payloads", () => {
-    expect(isInferenceResult({ type: "INFERENCE_RESULT", requestId: 1, result: {} })).toBe(true);
+    expect(
+      isInferenceResult({ type: "INFERENCE_RESULT", requestId: 1, phase: "quick", result: {} }),
+    ).toBe(true);
+    expect(isInferenceResult({ type: "INFERENCE_RESULT", requestId: 1, result: {} })).toBe(false); // missing phase
     expect(isInferenceResult({ type: "INFERENCE_RESULT" })).toBe(false);
   });
 
@@ -83,11 +132,17 @@ describe("message type guards", () => {
       isAnalysisResultMsg({
         type: "ANALYSIS_RESULT",
         requestId: 1,
+        phase: "detail",
         analyzedLine: "line",
         result: {},
       }),
     ).toBe(true);
-    expect(isAnalysisResultMsg({ type: "ANALYSIS_RESULT", requestId: 1, result: {} })).toBe(false);
+    expect(
+      isAnalysisResultMsg({ type: "ANALYSIS_RESULT", requestId: 1, phase: "quick", result: {} }),
+    ).toBe(false); // missing analyzedLine
+    expect(
+      isAnalysisResultMsg({ type: "ANALYSIS_RESULT", requestId: 1, analyzedLine: "l", result: {} }),
+    ).toBe(false); // missing phase
   });
 });
 

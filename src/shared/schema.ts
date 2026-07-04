@@ -1,7 +1,8 @@
 /**
- * The FR-6 inference contract and the FR-27 error fallback. Pure — no
- * `chrome.*` or `navigator.gpu` references — so it is unit-testable in
- * isolation.
+ * The v2 split inference contract (FR-B1/B2) and the FR-27 error fallback.
+ * Pure — no `chrome.*` or `navigator.gpu` references — so it is
+ * unit-testable in isolation. See
+ * adr/2026-07-04-two-phase-split-inference-contract.md.
  */
 import { ANALYSIS_ERROR_MESSAGE } from "./constants";
 
@@ -12,8 +13,13 @@ export interface DeconstructionRow {
   role_or_meaning: string;
 }
 
-export interface AnalysisResult {
+/** Phase-1 (quick) result — translation only (FR-A1/A2, FR-B1). */
+export interface QuickResult {
   translation: { literal: string; natural: string };
+}
+
+/** Phase-2 (detail) result — the three heavy sections (FR-A3, FR-B1). */
+export interface DetailResult {
   deconstruction: DeconstructionRow[];
   context: string;
   grammar_rules: string[];
@@ -40,11 +46,10 @@ function isDeconstructionRow(value: unknown): value is DeconstructionRow {
 }
 
 /**
- * Validates an unknown parsed value against the FR-6 schema. Empty arrays
- * and empty strings are treated as valid (FR-5.21 — the panel degrades those
- * sections cleanly rather than treating them as a validation failure).
+ * Validates an unknown parsed value against the quick-phase schema. Empty
+ * strings are treated as valid (FR-5.21 clean degradation).
  */
-export function validateAnalysis(value: unknown): AnalysisResult | null {
+export function validateQuick(value: unknown): QuickResult | null {
   if (typeof value !== "object" || value === null) return null;
   const obj = value as Record<string, unknown>;
 
@@ -52,6 +57,17 @@ export function validateAnalysis(value: unknown): AnalysisResult | null {
   if (typeof translation !== "object" || translation === null) return null;
   const { literal, natural } = translation as Record<string, unknown>;
   if (!isString(literal) || !isString(natural)) return null;
+
+  return { translation: { literal, natural } };
+}
+
+/**
+ * Validates an unknown parsed value against the detail-phase schema. Empty
+ * arrays/strings are treated as valid (FR-5.21 clean degradation).
+ */
+export function validateDetail(value: unknown): DetailResult | null {
+  if (typeof value !== "object" || value === null) return null;
+  const obj = value as Record<string, unknown>;
 
   const deconstruction = obj.deconstruction;
   if (!Array.isArray(deconstruction) || !deconstruction.every(isDeconstructionRow)) return null;
@@ -63,7 +79,6 @@ export function validateAnalysis(value: unknown): AnalysisResult | null {
   if (!Array.isArray(grammarRules) || !grammarRules.every(isString)) return null;
 
   return {
-    translation: { literal, natural },
     deconstruction,
     context,
     grammar_rules: grammarRules,

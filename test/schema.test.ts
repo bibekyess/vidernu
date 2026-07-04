@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import { isAnalysisError, makeAnalysisError, validateAnalysis } from "../src/shared/schema";
+import {
+  isAnalysisError,
+  makeAnalysisError,
+  validateDetail,
+  validateQuick,
+} from "../src/shared/schema";
 
-function validPayload() {
+function validQuickPayload() {
   return {
     translation: { literal: "I go to school.", natural: "I'm heading to school." },
+  };
+}
+
+function validDetailPayload() {
+  return {
     deconstruction: [
       { token: "학교", root: "학교", part_of_speech: "noun", role_or_meaning: "school" },
       {
@@ -19,56 +29,77 @@ function validPayload() {
   };
 }
 
-describe("validateAnalysis", () => {
+describe("validateQuick", () => {
   it("accepts a fully populated valid object", () => {
-    expect(validateAnalysis(validPayload())).toEqual(validPayload());
+    expect(validateQuick(validQuickPayload())).toEqual(validQuickPayload());
   });
 
-  it("accepts empty deconstruction/grammar_rules and empty strings (FR-5.21 clean degradation)", () => {
-    const payload = {
-      translation: { literal: "", natural: "" },
-      deconstruction: [],
-      context: "",
-      grammar_rules: [],
-    };
-    expect(validateAnalysis(payload)).toEqual(payload);
+  it("accepts empty strings (FR-5.21 clean degradation)", () => {
+    const payload = { translation: { literal: "", natural: "" } };
+    expect(validateQuick(payload)).toEqual(payload);
   });
 
   it("rejects a missing translation field", () => {
-    const payload = validPayload() as Record<string, unknown>;
-    delete payload.translation;
-    expect(validateAnalysis(payload)).toBeNull();
+    expect(validateQuick({})).toBeNull();
   });
 
   it("rejects a mistyped translation.natural (number instead of string)", () => {
-    const payload = validPayload();
+    const payload = validQuickPayload();
     // @ts-expect-error intentionally malformed for the test
     payload.translation.natural = 42;
-    expect(validateAnalysis(payload)).toBeNull();
-  });
-
-  it("rejects a deconstruction row missing a required key", () => {
-    const payload = validPayload() as { deconstruction: Record<string, unknown>[] };
-    delete payload.deconstruction[0]!.role_or_meaning;
-    expect(validateAnalysis(payload)).toBeNull();
-  });
-
-  it("rejects deconstruction that is not an array", () => {
-    const payload = validPayload() as unknown as Record<string, unknown>;
-    payload.deconstruction = "not an array";
-    expect(validateAnalysis(payload)).toBeNull();
-  });
-
-  it("rejects grammar_rules containing non-string entries", () => {
-    const payload = validPayload() as unknown as Record<string, unknown>;
-    payload.grammar_rules = ["ok", 5];
-    expect(validateAnalysis(payload)).toBeNull();
+    expect(validateQuick(payload)).toBeNull();
   });
 
   it("rejects null and non-object input", () => {
-    expect(validateAnalysis(null)).toBeNull();
-    expect(validateAnalysis("a string")).toBeNull();
-    expect(validateAnalysis(42)).toBeNull();
+    expect(validateQuick(null)).toBeNull();
+    expect(validateQuick("a string")).toBeNull();
+    expect(validateQuick(42)).toBeNull();
+  });
+
+  it("ignores extraneous detail-phase fields on an otherwise valid quick payload", () => {
+    const payload = { ...validQuickPayload(), ...validDetailPayload() };
+    expect(validateQuick(payload)).toEqual(validQuickPayload());
+  });
+});
+
+describe("validateDetail", () => {
+  it("accepts a fully populated valid object", () => {
+    expect(validateDetail(validDetailPayload())).toEqual(validDetailPayload());
+  });
+
+  it("accepts empty deconstruction/grammar_rules and empty context (FR-5.21 clean degradation)", () => {
+    const payload = { deconstruction: [], context: "", grammar_rules: [] };
+    expect(validateDetail(payload)).toEqual(payload);
+  });
+
+  it("rejects a deconstruction row missing a required key", () => {
+    const payload = validDetailPayload() as { deconstruction: Record<string, unknown>[] };
+    delete payload.deconstruction[0]!.role_or_meaning;
+    expect(validateDetail(payload)).toBeNull();
+  });
+
+  it("rejects deconstruction that is not an array", () => {
+    const payload = validDetailPayload() as unknown as Record<string, unknown>;
+    payload.deconstruction = "not an array";
+    expect(validateDetail(payload)).toBeNull();
+  });
+
+  it("rejects a missing context field", () => {
+    const payload = validDetailPayload() as Record<string, unknown>;
+    delete payload.context;
+    expect(validateDetail(payload)).toBeNull();
+  });
+
+  it("rejects grammar_rules containing non-string entries", () => {
+    const payload = validDetailPayload() as unknown as Record<string, unknown>;
+    payload.grammar_rules = ["ok", 5];
+    expect(validateDetail(payload)).toBeNull();
+  });
+
+  it("rejects null and non-object input", () => {
+    expect(validateDetail(null)).toBeNull();
+    expect(validateDetail("a string")).toBeNull();
+    expect(validateDetail(42)).toBeNull();
   });
 });
 
@@ -83,7 +114,8 @@ describe("makeAnalysisError / isAnalysisError", () => {
 
   it("recognizes a valid error object and rejects a normal result", () => {
     expect(isAnalysisError(makeAnalysisError())).toBe(true);
-    expect(isAnalysisError(validPayload())).toBe(false);
+    expect(isAnalysisError(validQuickPayload())).toBe(false);
+    expect(isAnalysisError(validDetailPayload())).toBe(false);
     expect(isAnalysisError(null)).toBe(false);
   });
 });
