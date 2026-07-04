@@ -36,6 +36,10 @@ export async function runInference(
   lang: string | undefined,
   isSuperseded: () => boolean,
 ): Promise<AnalysisResult | AnalysisError> {
+  // Always log at the start so "was runInference even called?" is answerable
+  // without enabling Verbose level in DevTools (console.debug is hidden by default).
+  console.log(LOG, "runInference called — text:", text, "lang:", lang);
+
   const generator = await getPipeline();
   const messages = buildPrompt(text, lang);
 
@@ -62,10 +66,8 @@ export async function runInference(
   } as PipelineOptions & { stopping_criteria: StoppingCriteriaList };
 
   if (DEBUG_INFERENCE) {
-    console.debug(LOG, "input text:", text);
-    console.debug(LOG, "lang:", lang);
-    console.debug(LOG, "messages (prompt):", messages);
-    console.debug(LOG, "generateOptions:", {
+    console.log(LOG, "messages (prompt):", messages);
+    console.log(LOG, "generateOptions:", {
       max_new_tokens: MAX_NEW_TOKENS,
       do_sample: true,
       temperature: TEMPERATURE,
@@ -77,19 +79,19 @@ export async function runInference(
     const output = (await generator(messages, generateOptions)) as TextGenerationOutput;
 
     if (DEBUG_INFERENCE) {
-      console.debug(LOG, "raw output object:", output);
-    }
-
-    if (isSuperseded()) {
-      console.debug(LOG, "superseded after generation — discarding result");
-      return makeAnalysisError();
+      console.log(LOG, "raw output object:", output);
     }
 
     const first = Array.isArray(output) ? output[0] : undefined;
     const generatedText = typeof first?.generated_text === "string" ? first.generated_text : "";
 
-    if (DEBUG_INFERENCE) {
-      console.debug(LOG, "generatedText (raw model output):", generatedText);
+    // Log the raw model text before any superseded/parse branch so a
+    // timed-out or interrupted generation still shows what was produced.
+    console.log(LOG, "generatedText (raw model output):", generatedText);
+
+    if (isSuperseded()) {
+      console.log(LOG, "superseded after generation — discarding result");
+      return makeAnalysisError();
     }
 
     const parsed = sanitizeAndParse(generatedText);
@@ -105,7 +107,7 @@ export async function runInference(
     }
 
     if (DEBUG_INFERENCE) {
-      console.debug(LOG, "parse/validate succeeded:", parsed);
+      console.log(LOG, "parse/validate succeeded:", parsed);
     }
 
     return parsed;

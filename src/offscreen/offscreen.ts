@@ -4,6 +4,8 @@
  * inference itself (see ADR).
  */
 import { LOAD_STALL_TIMEOUT_MS, LOAD_TIMEOUT_MESSAGE, TIMEOUT_MS } from "../shared/constants";
+
+const LOG_ANALYSIS = "[Vidernu][analysis]";
 import {
   type CapabilityMsg,
   isLoadModel,
@@ -119,10 +121,25 @@ async function handleRunInference(requestId: number, text: string, lang?: string
   let timedOut = false;
   const isSuperseded = (): boolean => currentRequestId !== requestId || timedOut;
 
+  // Log when an analysis request arrives so the flow is visible even if
+  // inference never reaches runInference (e.g. it times out first).
+  console.log(
+    LOG_ANALYSIS,
+    `request ${requestId} received — text: "${text}", lang: ${lang ?? "none"}, timeout: ${TIMEOUT_MS}ms`,
+  );
+
+  const startMs = Date.now();
   const result = await raceTimeout<AnalysisResult | AnalysisError>(
     runInference(text, lang, isSuperseded),
     TIMEOUT_MS,
     () => {
+      const elapsedMs = Date.now() - startMs;
+      // Distinguish a timeout (analysis cap reached) from a superseded
+      // cancellation inside runInference so the console makes the cause clear.
+      console.warn(
+        LOG_ANALYSIS,
+        `request ${requestId} TIMED OUT after ${elapsedMs}ms (cap: ${TIMEOUT_MS}ms)`,
+      );
       timedOut = true;
       return makeAnalysisError();
     },
@@ -132,9 +149,11 @@ async function handleRunInference(requestId: number, text: string, lang?: string
     // A newer request has already won; still notify the service worker (with
     // `superseded: true`) so it drops this request's `pendingAnalyses` entry
     // instead of it accumulating there for the rest of the session.
+    console.log(LOG_ANALYSIS, `request ${requestId} superseded — posting with superseded:true`);
     post({ type: "INFERENCE_RESULT", requestId, result, superseded: true });
     return;
   }
+  console.log(LOG_ANALYSIS, `request ${requestId} complete — posting result`, result);
   post({ type: "INFERENCE_RESULT", requestId, result });
 }
 

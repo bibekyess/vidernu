@@ -17,10 +17,14 @@ export const DTYPE = "q4f16" as const;
 // Low-temperature, bounded-context decoding to favor deterministic, parsable
 // structured output (FR-6.24) and to keep footprint bounded (FR-9.32).
 export const TEMPERATURE = 0.1;
-export const MAX_NEW_TOKENS = 512;
+// 512 truncated full CJK breakdowns mid-JSON, producing invalid output;
+// 768 gives room for a complete object.
+export const MAX_NEW_TOKENS = 768;
 
-// Per-analysis timeout (FR-7.29). "Tens of seconds" per spec Assumptions.
-export const TIMEOUT_MS = 45_000;
+// Per-analysis timeout (FR-7.29). On-device generation of long CJK analyses
+// on integrated GPUs can exceed 45s; 120s lets generation complete before
+// the latest-wins/timeout cap interrupts it.
+export const TIMEOUT_MS = 120_000;
 
 // Primary validation targets (FR-8.30b). Other source languages still get
 // best-effort English analysis (FR-8.31).

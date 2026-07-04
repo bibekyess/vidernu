@@ -102,10 +102,34 @@ export function loadModel(onProgress: ProgressListener): Promise<TextGenerationP
       const mapped = toLoadProgress(info);
       if (mapped) onProgress(mapped);
     },
-  }).catch((err: unknown) => {
-    pipelinePromise = null;
-    throw err;
-  });
+  })
+    .then((p) => {
+      // Best-effort: report the effective ONNX execution backend so the user
+      // can confirm inference is on WebGPU and not silently falling back to
+      // slow WASM/CPU. executionProviders is not in the public types, so we
+      // read it via an unknown cast — if it isn't there at runtime the log
+      // still shows the configured device/dtype.
+      const sessionMeta = (p as unknown as { _session?: { executionProviders?: string[] } })
+        ._session;
+      const providers = sessionMeta?.executionProviders ?? [];
+      console.log(
+        "[Vidernu][model]",
+        "pipeline ready — configured device:",
+        DEVICE,
+        "dtype:",
+        DTYPE,
+        "wasmPaths base:",
+        env.backends.onnx.wasm?.wasmPaths,
+        providers.length > 0
+          ? `effective executionProviders: ${providers.join(", ")}`
+          : "(executionProviders not readable from public API — confirm WebGPU via DevTools Performance panel)",
+      );
+      return p;
+    })
+    .catch((err: unknown) => {
+      pipelinePromise = null;
+      throw err;
+    });
 
   return pipelinePromise;
 }
