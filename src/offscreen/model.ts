@@ -6,7 +6,13 @@
  */
 import { env, pipeline, type TextGenerationPipelineType } from "@huggingface/transformers";
 
-import { DEVICE, DTYPE, MODEL_ID, type ModelStatus } from "../shared/constants";
+import {
+  DEVICE,
+  DTYPE,
+  MODEL_ID,
+  MODEL_LOAD_FALLBACK_MESSAGE,
+  type ModelStatus,
+} from "../shared/constants";
 
 // transformers.js does not re-export its internal `ProgressInfo` union from
 // the package root, so it is reproduced narrowly here (see
@@ -52,8 +58,10 @@ function toLoadProgress(info: ProgressInfo): LoadProgress | null {
         fileProgress.set(info.file, { loaded: info.loaded ?? 0, total: info.total ?? 0 });
       }
       return { status: "downloading", progress: aggregateProgress() };
+    // The "done" event signals all files have been fetched; the model is now
+    // compiling/initialising (the "loading" phase), not still downloading (FR-7).
     case "done":
-      return { status: "downloading", progress: aggregateProgress() };
+      return { status: "loading" };
     case "ready":
       // Weights are fetched; the model/session is being instantiated.
       return { status: "loading" };
@@ -92,4 +100,26 @@ export async function getPipeline(): Promise<TextGenerationPipelineType> {
     throw new Error("Model has not been loaded yet.");
   }
   return pipelinePromise;
+}
+
+/**
+ * Clears the pipeline singleton so the next LOAD_MODEL starts a fresh load.
+ * Called by the stall-timeout path in the offscreen document so a timeout
+ * leaves the system retryable (FR-13); loadModel already resets on catch.
+ */
+export function resetPipeline(): void {
+  pipelinePromise = null;
+}
+
+/**
+ * Returns a readable single-line error message for the panel (FR-2). Uses the
+ * Error.message when it is a non-empty string; falls back to the generic
+ * message so non-Error throws (strings, objects) are handled gracefully.
+ * Multi-line messages are collapsed to one line.
+ */
+export function deriveErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message.trim() !== "") {
+    return err.message.replace(/\s+/g, " ").trim();
+  }
+  return MODEL_LOAD_FALLBACK_MESSAGE;
 }

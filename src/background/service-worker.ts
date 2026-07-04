@@ -24,6 +24,9 @@ interface ExtensionState {
   progress?: number;
   webgpu: boolean;
   lowPowerHint?: boolean;
+  // Single-line error detail forwarded from the offscreen MODEL_STATUS error
+  // payload; undefined on any non-error status (FR-3/FR-5).
+  message?: string;
 }
 
 let currentState: ExtensionState = { modelStatus: "standby", webgpu: true };
@@ -59,7 +62,21 @@ async function broadcastState(): Promise<void> {
 
 async function init(): Promise<void> {
   await loadPersistedState();
+
+  // Set the badge immediately so it reflects the current/standby state before
+  // any MODEL_STATUS arrives — never leaves the badge empty (FR-15/FR-16/FR-19).
+  setBadge(currentState.modelStatus, currentState.progress);
+
   await ensureOffscreenDocument();
+
+  // Send LOAD_MODEL regardless of the persisted status. On a SW-only idle-restart
+  // the offscreen doc and its in-memory pipeline survive (chrome.storage.session
+  // persists across SW idle-restarts and the offscreen document has an independent
+  // lifecycle — see spec FR-20 and the PR description for the verification note).
+  // loadModel() is idempotent: it returns the live singleton when the pipeline
+  // already exists, so a surviving "ready" state is preserved and no re-download
+  // occurs; the re-posted MODEL_STATUS "ready" reconciles currentState. On a full
+  // extension reload (session cleared, offscreen torn down) this starts cold (FR-19).
   chrome.runtime.sendMessage({ type: "LOAD_MODEL" } satisfies Message).catch(() => {
     // The offscreen document's listener may not be attached yet on the very
     // first tick after creation; it will pick up state from CAPABILITY/
@@ -95,6 +112,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     pendingAnalyses.set(message.requestId, { tabId, analyzedLine: message.text });
     void (async () => {
       await ensureOffscreenDocument();
+      // Lazy re-init: if the model is not ready when analysis is requested,
+      // trigger a (re-)load so the user gets progress rather than being left
+      // stranded at a stale non-ready status (FR-21).
+      if (currentState.modelStatus !== "ready") {
+        chrome.runtime.sendMessage({ type: "LOAD_MODEL" } satisfies Message).catch(() => {});
+      }
       chrome.runtime
         .sendMessage({
           type: "RUN_INFERENCE",
@@ -112,7 +135,13 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   }
 
   if (isModelStatusMsg(message)) {
-    currentState = { ...currentState, modelStatus: message.status, progress: message.progress };
+    currentState = {
+      ...currentState,
+      modelStatus: message.status,
+      progress: message.progress,
+      // Store the error detail on error and clear it on any non-error status (FR-3/FR-5).
+      message: message.status === "error" ? message.message : undefined,
+    };
     persistState();
     setBadge(message.status, message.progress);
     void broadcastState();

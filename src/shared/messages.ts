@@ -81,6 +81,9 @@ export interface StateSnapshot {
   progress?: number;
   webgpu: boolean;
   lowPowerHint?: boolean;
+  // The single-line error detail from the last MODEL_STATUS error, forwarded
+  // so a panel opened after an error still sees it (FR-3). Cleared on non-error. (FR-5)
+  message?: string;
 }
 
 export interface AnalysisResultMsg {
@@ -194,7 +197,8 @@ export function isStateSnapshot(value: unknown): value is StateSnapshot {
     isModelStatusValue(value.modelStatus) &&
     typeof value.webgpu === "boolean" &&
     (value.progress === undefined || isNumber(value.progress)) &&
-    (value.lowPowerHint === undefined || typeof value.lowPowerHint === "boolean")
+    (value.lowPowerHint === undefined || typeof value.lowPowerHint === "boolean") &&
+    (value.message === undefined || isString(value.message))
   );
 }
 

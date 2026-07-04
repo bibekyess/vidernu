@@ -90,3 +90,22 @@ describe("message type guards", () => {
     expect(isAnalysisResultMsg({ type: "ANALYSIS_RESULT", requestId: 1, result: {} })).toBe(false);
   });
 });
+
+// Step 2: isStateSnapshot guard update — accepts optional message field.
+describe("isStateSnapshot: optional message field (Step 2 / FR-3)", () => {
+  it("accepts a snapshot with message:'boom'", () => {
+    expect(
+      isStateSnapshot({ type: "STATE", modelStatus: "error", webgpu: true, message: "boom" }),
+    ).toBe(true);
+  });
+
+  it("accepts a snapshot without a message field", () => {
+    expect(isStateSnapshot({ type: "STATE", modelStatus: "ready", webgpu: true })).toBe(true);
+  });
+
+  it("rejects a snapshot where message is not a string", () => {
+    expect(isStateSnapshot({ type: "STATE", modelStatus: "error", webgpu: true, message: 5 })).toBe(
+      false,
+    );
+  });
+});

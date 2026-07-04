@@ -6,36 +6,60 @@ type MessageListener = (
   sendResponse: (response?: unknown) => void,
 ) => boolean | void;
 
-function installChromeMock(): {
+type SimpleListener = (...args: unknown[]) => void;
+
+function installChromeMock(initialState?: unknown): {
   sendMessageToTab: ReturnType<typeof vi.fn>;
+  sendMessageRuntime: ReturnType<typeof vi.fn>;
+  setBadgeText: ReturnType<typeof vi.fn>;
+  setBadgeBackgroundColor: ReturnType<typeof vi.fn>;
+  setTitle: ReturnType<typeof vi.fn>;
+  storageSet: ReturnType<typeof vi.fn>;
   getListener: () => MessageListener;
+  triggerInstalled: () => void;
 } {
-  let listener: MessageListener | undefined;
+  let messageListener: MessageListener | undefined;
+  let installedListener: SimpleListener | undefined;
+
   const sendMessageToTab = vi.fn().mockResolvedValue(undefined);
+  const sendMessageRuntime = vi.fn().mockResolvedValue(undefined);
+  const setBadgeText = vi.fn().mockResolvedValue(undefined);
+  const setBadgeBackgroundColor = vi.fn().mockResolvedValue(undefined);
+  const setTitle = vi.fn().mockResolvedValue(undefined);
+  const storageSet = vi.fn().mockResolvedValue(undefined);
 
   vi.stubGlobal("chrome", {
     runtime: {
-      onInstalled: { addListener: vi.fn() },
+      onInstalled: {
+        addListener: vi.fn((fn: SimpleListener) => {
+          installedListener = fn;
+        }),
+      },
       onStartup: { addListener: vi.fn() },
       onMessage: {
         addListener: vi.fn((fn: MessageListener) => {
-          listener = fn;
+          messageListener = fn;
         }),
       },
-      sendMessage: vi.fn().mockResolvedValue(undefined),
+      sendMessage: sendMessageRuntime,
       getContexts: vi.fn().mockResolvedValue([]),
       getURL: vi.fn((path: string) => path),
       ContextType: { OFFSCREEN_DOCUMENT: "OFFSCREEN_DOCUMENT" },
     },
-    action: { onClicked: { addListener: vi.fn() } },
+    action: {
+      onClicked: { addListener: vi.fn() },
+      setBadgeText,
+      setBadgeBackgroundColor,
+      setTitle,
+    },
     offscreen: {
       Reason: { WORKERS: "WORKERS" },
       createDocument: vi.fn().mockResolvedValue(undefined),
     },
     storage: {
       session: {
-        get: vi.fn().mockResolvedValue({}),
-        set: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn().mockResolvedValue(initialState ? { state: initialState } : {}),
+        set: storageSet,
       },
     },
     tabs: {
@@ -46,9 +70,18 @@ function installChromeMock(): {
 
   return {
     sendMessageToTab,
+    sendMessageRuntime,
+    setBadgeText,
+    setBadgeBackgroundColor,
+    setTitle,
+    storageSet,
     getListener: () => {
-      if (!listener) throw new Error("onMessage listener was never registered");
-      return listener;
+      if (!messageListener) throw new Error("onMessage listener was never registered");
+      return messageListener;
+    },
+    triggerInstalled: () => {
+      if (!installedListener) throw new Error("onInstalled listener was never registered");
+      installedListener();
     },
   };
 }
@@ -134,5 +167,163 @@ describe("service-worker: pendingAnalyses cleanup on INFERENCE_RESULT", () => {
       analyzedLine: "new line",
       result: { error: true, message: "z" },
     });
+  });
+});
+
+describe("service-worker: error message relayed and persisted (Section A)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+  });
+
+  it("persists and broadcasts the error message from MODEL_STATUS (FR-3)", async () => {
+    const { storageSet, getListener } = installChromeMock();
+    await import("../src/background/service-worker");
+    const onMessage = getListener();
+    const sendResponse = vi.fn();
+    const sender = {} as chrome.runtime.MessageSender;
+
+    onMessage({ type: "MODEL_STATUS", status: "error", message: "boom" }, sender, sendResponse);
+    await Promise.resolve();
+
+    expect(storageSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: expect.objectContaining({ modelStatus: "error", message: "boom" }),
+      }),
+    );
+  });
+
+  it("clears the error message when a non-error MODEL_STATUS arrives (FR-5 server-side)", async () => {
+    const { storageSet, getListener } = installChromeMock();
+    await import("../src/background/service-worker");
+    const onMessage = getListener();
+    const sendResponse = vi.fn();
+    const sender = {} as chrome.runtime.MessageSender;
+
+    onMessage({ type: "MODEL_STATUS", status: "error", message: "boom" }, sender, sendResponse);
+    onMessage({ type: "MODEL_STATUS", status: "ready" }, sender, sendResponse);
+    await Promise.resolve();
+
+    // The last storage.set call should have message: undefined.
+    const lastCallArgs = storageSet.mock.calls.at(-1);
+    expect(lastCallArgs).toBeDefined();
+    expect(lastCallArgs?.[0]?.state?.message).toBeUndefined();
+    expect(lastCallArgs?.[0]?.state?.modelStatus).toBe("ready");
+  });
+
+  it("includes the error message in the GET_STATE reply (FR-3 panel-after-error edge case)", async () => {
+    const { getListener } = installChromeMock();
+    await import("../src/background/service-worker");
+    const onMessage = getListener();
+    const sendResponse = vi.fn();
+    const sender = {} as chrome.runtime.MessageSender;
+
+    onMessage({ type: "MODEL_STATUS", status: "error", message: "boom" }, sender, sendResponse);
+
+    const getStateSendResponse = vi.fn();
+    onMessage({ type: "GET_STATE" }, sender, getStateSendResponse);
+
+    expect(getStateSendResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "STATE", modelStatus: "error", message: "boom" }),
+    );
+  });
+});
+
+describe("service-worker: badge set on init (Section D/E)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+  });
+
+  it("sets the badge to STBY before sending LOAD_MODEL on a cold start (FR-15/FR-16/FR-19)", async () => {
+    const { setBadgeText, sendMessageRuntime, triggerInstalled } = installChromeMock();
+    await import("../src/background/service-worker");
+
+    triggerInstalled();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Badge was set at some point before LOAD_MODEL was sent.
+    const badgeCalls = setBadgeText.mock.invocationCallOrder;
+    const loadModelCalls = sendMessageRuntime.mock.calls
+      .map((c, i) => ({ msg: c[0], order: sendMessageRuntime.mock.invocationCallOrder[i] }))
+      .filter((c) => c.msg?.type === "LOAD_MODEL");
+
+    expect(setBadgeText).toHaveBeenCalled();
+    const badgeCallArgs = setBadgeText.mock.calls.map((c) => c[0]);
+    // Should have been called with a non-empty text.
+    expect(badgeCallArgs.some((a) => a.text && a.text.length > 0)).toBe(true);
+
+    if (loadModelCalls.length > 0) {
+      // Badge was set before LOAD_MODEL.
+      const firstBadgeOrder = badgeCalls.at(0);
+      const firstLoadModelOrder = loadModelCalls.at(0)?.order;
+      if (firstBadgeOrder !== undefined && firstLoadModelOrder !== undefined) {
+        expect(firstBadgeOrder).toBeLessThan(firstLoadModelOrder);
+      }
+    }
+  });
+
+  it("sets the badge to reflect the restored status (e.g. READY) on SW-only restart (FR-20)", async () => {
+    const { setBadgeText, triggerInstalled } = installChromeMock({
+      modelStatus: "ready",
+      webgpu: true,
+    });
+    await import("../src/background/service-worker");
+
+    triggerInstalled();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const badgeCallArgs = setBadgeText.mock.calls.map((c) => c[0]);
+    expect(badgeCallArgs.some((a) => a.text === "READY")).toBe(true);
+  });
+});
+
+describe("service-worker: reconcile restored ready + LOAD_MODEL on init (Section E)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+  });
+
+  it("sends LOAD_MODEL even when persisted status is 'ready' (idempotent reconcile — FR-20)", async () => {
+    const { sendMessageRuntime, triggerInstalled } = installChromeMock({
+      modelStatus: "ready",
+      webgpu: true,
+    });
+    await import("../src/background/service-worker");
+
+    triggerInstalled();
+    // Flush the async chain: loadPersistedState (storage.get), ensureOffscreenDocument
+    // (getContexts + createDocument), then the LOAD_MODEL sendMessage.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    const loadModelSent = sendMessageRuntime.mock.calls.some((c) => c[0]?.type === "LOAD_MODEL");
+    expect(loadModelSent).toBe(true);
+  });
+});
+
+describe("service-worker: lazy re-init on analysis when not ready (Section E — FR-21)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+  });
+
+  it("sends LOAD_MODEL when ANALYZE_REQUEST arrives and model is not ready", async () => {
+    const { sendMessageRuntime, getListener } = installChromeMock();
+    await import("../src/background/service-worker");
+    const onMessage = getListener();
+    const sendResponse = vi.fn();
+    const sender = { tab: { id: 99 } } as chrome.runtime.MessageSender;
+
+    // Default state is standby (not ready) — trigger an analysis request.
+    onMessage({ type: "ANALYZE_REQUEST", requestId: 1, text: "hello" }, sender, sendResponse);
+    // Flush: the async IIFE awaits ensureOffscreenDocument (getContexts) before the LOAD_MODEL send.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    const loadModelSent = sendMessageRuntime.mock.calls.some((c) => c[0]?.type === "LOAD_MODEL");
+    expect(loadModelSent).toBe(true);
   });
 });

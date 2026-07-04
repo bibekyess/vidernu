@@ -6,6 +6,7 @@ import {
   renderAnalysisError,
   renderLoading,
   renderSkeleton,
+  setLoadError,
   type PanelElements,
 } from "../src/sidepanel/render";
 
@@ -42,5 +43,47 @@ describe("render", () => {
     renderAnalysisError(els, "hello world", "Something went wrong.");
     expect(els.analyzedLine.textContent).toBe('Analyzed: "hello world"');
     expect(els.analyzedLine.textContent).not.toContain("Analyzing");
+  });
+});
+
+// Section A: dedicated load-error area (FR-4/FR-5).
+describe("render: dedicated load-error area (Section A)", () => {
+  let els: PanelElements;
+
+  beforeEach(() => {
+    const container = document.createElement("div");
+    els = renderSkeleton(container);
+  });
+
+  it("skeleton contains the loadError element and loadErrorRetry button", () => {
+    expect(els.loadError).toBeDefined();
+    expect(els.loadErrorRetry).toBeDefined();
+    expect(els.loadErrorRetry.tagName).toBe("BUTTON");
+  });
+
+  it("loadError is hidden initially", () => {
+    expect(els.loadError.hidden).toBe(true);
+  });
+
+  it("setLoadError shows the error detail and a hint — distinct node from sections (FR-4)", () => {
+    setLoadError(els, "boom");
+    expect(els.loadError.hidden).toBe(false);
+    expect(els.loadError.textContent).toContain("boom");
+    // The hint text must be present.
+    expect(els.loadError.textContent).toContain("Retry");
+    // The loadError node is NOT sections.
+    expect(els.loadError).not.toBe(els.sections);
+  });
+
+  it("setLoadError(null) hides the area and clears detail (FR-5)", () => {
+    setLoadError(els, "boom");
+    setLoadError(els, null);
+    expect(els.loadError.hidden).toBe(true);
+  });
+
+  it("Retry control is present inside the load-error area (Section C)", () => {
+    // The button should be inside loadError (or at minimum in the document).
+    expect(els.loadErrorRetry.textContent).toContain("Retry");
+    expect(els.loadError.contains(els.loadErrorRetry)).toBe(true);
   });
 });
