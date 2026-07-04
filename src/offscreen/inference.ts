@@ -11,9 +11,15 @@ import {
 } from "@huggingface/transformers";
 
 import { MAX_NEW_TOKENS, TEMPERATURE } from "../shared/constants";
-import { buildPrompt } from "../shared/prompt";
-import { extractGeneratedText, sanitizeAndParse } from "../shared/sanitize";
-import { type AnalysisError, type AnalysisResult, makeAnalysisError } from "../shared/schema";
+import type { AnalysisPhase } from "../shared/messages";
+import { buildDetailPrompt, buildQuickPrompt } from "../shared/prompt";
+import { extractGeneratedText, parseDetail, parseQuick } from "../shared/sanitize";
+import {
+  type AnalysisError,
+  type DetailResult,
+  type QuickResult,
+  makeAnalysisError,
+} from "../shared/schema";
 import { getPipeline } from "./model";
 
 // How often to poll `isSuperseded` during generation. A WebGPU generation
@@ -27,23 +33,25 @@ const DEBUG_INFERENCE = false;
 const LOG = "[Vidernu][inference]";
 
 /**
- * Runs one inference. `isSuperseded` is polled while generating so a newer
- * trigger (or a timeout, see offscreen.ts) can stop a stale generation
- * (FR-17 latest-wins).
+ * Runs one inference for the given phase (FR-B1). `isSuperseded` is polled
+ * while generating so a newer trigger, a timeout, or a user-initiated Stop
+ * (see offscreen.ts) can halt a stale/cancelled generation (FR-17
+ * latest-wins, FR-C3).
  */
 export async function runInference(
   text: string,
   lang: string | undefined,
+  phase: AnalysisPhase,
   isSuperseded: () => boolean,
-): Promise<AnalysisResult | AnalysisError> {
+): Promise<QuickResult | DetailResult | AnalysisError> {
   // Always log at the start so "was runInference even called?" is answerable
   // without enabling Verbose level in DevTools (console.debug is hidden by default).
   if (DEBUG_INFERENCE) {
-    console.log(LOG, "runInference called — text:", text, "lang:", lang);
+    console.log(LOG, "runInference called — phase:", phase, "text:", text, "lang:", lang);
   }
 
   const generator = await getPipeline();
-  const messages = buildPrompt(text, lang);
+  const messages = phase === "quick" ? buildQuickPrompt(text, lang) : buildDetailPrompt(text, lang);
 
   const criteria = new InterruptableStoppingCriteria();
   const stoppingCriteria = new StoppingCriteriaList();
@@ -97,7 +105,7 @@ export async function runInference(
       return makeAnalysisError();
     }
 
-    const parsed = sanitizeAndParse(generatedText);
+    const parsed = phase === "quick" ? parseQuick(generatedText) : parseDetail(generatedText);
     if (parsed === null) {
       // Log the raw text unconditionally so the failure is always visible in
       // the offscreen console, regardless of the DEBUG_INFERENCE flag.
