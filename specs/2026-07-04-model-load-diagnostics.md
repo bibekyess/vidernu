@@ -18,6 +18,13 @@ It is explicitly **phase 1**: it does not attempt to fix the underlying load fai
 is unknown until errors are surfaced) — it makes that failure fully visible and makes the
 lifecycle robust to restart and reload.
 
+**Phase-2 update (2026-07-04):** The phase-1 observability work confirmed the root cause:
+the ORT `.mjs` glue script was loaded from `cdn.jsdelivr.net` at runtime, which Chrome
+blocks under MV3's `script-src 'self'` CSP. The fix — bundling the ORT asyncify runtime
+into `dist/ort/` and pointing `env.backends.onnx.wasm.wasmPaths` at the extension origin
+before any `pipeline()` call — is implemented in the same branch and documented in
+`adr/2026-07-04-local-onnx-runtime-bundling.md`.
+
 ## User stories
 - As a user on capable hardware whose model fails to load, I want to see the real error
   message in the panel (and the full error in the offscreen console) so that I — or a

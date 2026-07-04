@@ -1,8 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 
+// vi.hoisted runs before any import, so chrome is available when model.ts
+// executes its module-level code (env.backends.onnx.wasm.wasmPaths = ...).
+vi.hoisted(() => {
+  vi.stubGlobal("chrome", {
+    runtime: {
+      getURL: (path: string) => `chrome-extension://test-id/${path}`,
+    },
+  } as unknown as typeof chrome);
+});
+
 // Mock the transformers.js module so model.ts can be imported in jsdom.
+// env.backends.onnx.wasm must exist so model.ts can assign wasmPaths into it.
 vi.mock("@huggingface/transformers", () => ({
-  env: { allowLocalModels: false, useBrowserCache: true },
+  env: {
+    allowLocalModels: false,
+    useBrowserCache: true,
+    backends: { onnx: { wasm: {} } },
+  },
   pipeline: vi.fn(),
 }));
 
@@ -42,6 +57,50 @@ describe("deriveErrorMessage", () => {
   it("returns the fallback for null/undefined throws", () => {
     expect(deriveErrorMessage(null)).toBe(MODEL_LOAD_FALLBACK_MESSAGE);
     expect(deriveErrorMessage(undefined)).toBe(MODEL_LOAD_FALLBACK_MESSAGE);
+  });
+});
+
+// Verify that model.ts sets wasmPaths to local extension URLs (not CDN) at
+// module evaluation time, so ORT never loads its glue script from the network.
+// This is the static assertion for the CSP/MV3 fix — the actual runtime load
+// (dynamic import of the .mjs inside the extension) requires a real Chrome
+// environment and cannot be verified in jsdom.
+describe("ORT local wasmPaths setup (CSP fix)", () => {
+  // Retrieve the wasmPaths that model.ts assigned at module-evaluation time.
+  // env.backends.onnx is typed as Partial<OrtEnv>, making wasm optional; the
+  // non-null assertion matches the runtime guarantee (transformers.js always
+  // initialises wasm before this module runs).
+  async function resolvedWasmPaths() {
+    const { env } = await import("@huggingface/transformers");
+    return env.backends.onnx.wasm!.wasmPaths as { mjs: string; wasm: string };
+  }
+
+  it("sets wasmPaths to chrome-extension:// URLs, not a CDN", async () => {
+    // model.ts module-level code assigns wasmPaths; by this point it has run.
+    const wasmPaths = await resolvedWasmPaths();
+    expect(wasmPaths).toBeDefined();
+    expect(wasmPaths.mjs).toMatch(/^chrome-extension:\/\//);
+    expect(wasmPaths.wasm).toMatch(/^chrome-extension:\/\//);
+    expect(wasmPaths.mjs).not.toMatch(/cdn\.jsdelivr\.net/);
+    expect(wasmPaths.wasm).not.toMatch(/cdn\.jsdelivr\.net/);
+  });
+
+  it("mjs path ends with the asyncify .mjs filename", async () => {
+    const wasmPaths = await resolvedWasmPaths();
+    expect(wasmPaths.mjs).toMatch(/ort-wasm-simd-threaded\.asyncify\.mjs$/);
+  });
+
+  it("wasm path ends with the asyncify .wasm filename", async () => {
+    const wasmPaths = await resolvedWasmPaths();
+    expect(wasmPaths.wasm).toMatch(/ort-wasm-simd-threaded\.asyncify\.wasm$/);
+  });
+
+  it("mjs and wasm point to the same ort/ directory prefix", async () => {
+    const wasmPaths = await resolvedWasmPaths();
+    const mjsBase = wasmPaths.mjs.replace(/[^/]+$/, "");
+    const wasmBase = wasmPaths.wasm.replace(/[^/]+$/, "");
+    expect(mjsBase).toBe(wasmBase);
+    expect(mjsBase).toMatch(/\/ort\/$/);
   });
 });
 

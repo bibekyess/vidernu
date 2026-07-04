@@ -22,6 +22,28 @@ import {
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
+// MV3 forbids remote script execution (script-src 'self' only). By default,
+// transformers.js sets wasmPaths to cdn.jsdelivr.net when running in Chrome,
+// which Chrome blocks as a CSP violation. Setting wasmPaths here — before any
+// pipeline() call — prevents transformers.js from overwriting it with the CDN
+// URL (it only sets the CDN path when wasmPaths is falsy).
+//
+// The ORT asyncify variant (.mjs + .wasm) is copied into dist/ort/ at build
+// time (see vite.config.ts copyOrtRuntime plugin) from the exact onnxruntime-web
+// version that transformers.js resolves, so versions can never drift.
+//
+// chrome.runtime.getURL resolves to chrome-extension://<id>/ort/... which
+// matches script-src 'self' for the offscreen document.
+const ortBase = chrome.runtime.getURL("ort/");
+// env.backends.onnx is Partial<OrtEnv> so wasm may be undefined on the type,
+// but transformers.js initialises it unconditionally before this module runs.
+// The non-null assertion matches the runtime guarantee; remove if the upstream
+// type is tightened in a future release.
+env.backends.onnx.wasm!.wasmPaths = {
+  mjs: `${ortBase}ort-wasm-simd-threaded.asyncify.mjs`,
+  wasm: `${ortBase}ort-wasm-simd-threaded.asyncify.wasm`,
+};
+
 let pipelinePromise: Promise<TextGenerationPipeline> | null = null;
 
 export interface LoadProgress {
