@@ -1,153 +1,163 @@
-# agent-dev-template
+# Vidernu
 
-An industry-standard, stack-agnostic multi-agent development template for Claude Code.
-Clone it, wire in your stack's real commands, and ship — the scaffolding is already here.
-
-## What's in here
-
-- **A multi-agent pipeline** (`.claude/agents/`) — orchestrator coordinates five specialists.
-- **Artifact lanes** (`specs/`, `plans/`, `adr/`) — agents hand off through files, never through context.
-- **`AGENTS.md`** — always-apply conventions every agent follows (imported by `CLAUDE.md`).
-- **Four deterministic hooks** (`.claude/hooks/`, wired in `.claude/settings.json`).
-- **`justfile`** — the stack-agnostic quality-gate contract (`just check`).
-- **`.github/` scaffolding** — PR template, CI workflow, CODEOWNERS, issue templates.
-- **`.claude/commands/`** — reusable slash commands for every pipeline stage.
-
-## The pipeline
-
-The `orchestrator` is the default session agent (`"agent": "orchestrator"` in
-`.claude/settings.json`). It delegates each stage to a specialist, passing **file paths,
-never artifact content**, so its context stays lean.
-
-```
-requirements → research → plan → implement → review
-```
-
-| Stage | Agent | Model | Writes | Reads |
-|---|---|---|---|---|
-| Requirements | `requirements-engineer` | opus | `specs/` | the request |
-| Research | `researcher` | haiku | — (read-only) | the codebase |
-| Plan | `technical-planner` | opus | `plans/` | the spec |
-| Implement | `implementation-engineer` | sonnet | code + `adr/` | spec + plan |
-| Review | `code-reviewer` | opus | — (read-only) | spec + plan + diff |
-
-**Model routing:** haiku = cheap breadth (research); opus = high-stakes reasoning
-(requirements, planning, review); sonnet = implementation.
-
-Two patterns make it work:
-
-- **Artifact bus via a shared worktree.** Each stage writes its artifact to a file in the
-  feature worktree; the next stage reads it from there. The orchestrator only passes the
-  path. The `prune-worktrees` hook reclaims the worktree afterward.
-- **Kick-backs to the orchestrator.** When a subagent needs help it returns a signal:
-  `NEEDS RESEARCH:` (→ runs the `researcher`) or `NEEDS DECISION:` (→ asks you).
-
-The pipeline **gates on requirements**: planning and implementation don't begin until the
-spec is `Ratified` (every assumption resolved or accepted by you).
-
-## Quality gate
-
-The gate is a root `justfile`. The stable command is `just check`, used by `AGENTS.md`,
-CI, the code-reviewer, and the implementation-engineer.
-
-```
-just check    # runs format → lint → typecheck → test
-```
-
-On a fresh clone every recipe is a no-op — the gate is green before you wire in your
-stack's real commands. Fill each recipe in the `justfile` with your actual tool:
-
-```justfile
-format:
-    prettier --write .   # or: ruff format .
-
-lint:
-    eslint .             # or: ruff check .
-
-typecheck:
-    tsc --noEmit         # or: mypy .
-
-test:
-    npm test             # or: pytest
-```
-
-## Slash commands
-
-`.claude/commands/` provides reusable commands for every pipeline stage:
-
-| Command | What it does |
-|---|---|
-| `/spec` | Requirements stage — draft and ratify the spec |
-| `/plan` | Planning stage — produce an implementer-ready plan |
-| `/implement` | Implementation stage — write code, run gate, open PR |
-| `/review` | Review stage — multi-pass review, loop until APPROVED |
-| `/quick-fix` | Trivial fast-path — skips spec + plan, straight to implement + review |
-| `/retro` | Post-merge retrospective — surface lessons learned |
-
-**Trivial fast-path:** use `/quick-fix` for a localized fix with no new dependency,
-interface, or schema change, and nothing ADR-worthy. Anything bigger uses the full pipeline.
-
-## Hooks
-
-Four deterministic guardrails, configured in `.claude/settings.json`:
-
-| Hook | Trigger | What it does |
-|---|---|---|
-| `agent-write-guard.sh` | PreToolUse(Write/Edit) | Confines `requirements-engineer` to `specs/`, `technical-planner` to `plans/` |
-| `protect-primary-checkout.sh` | PreToolUse(Write/Edit) | Blocks agent writes to the primary checkout on the default branch; enforces "work in the worktree" |
-| `secret-scan.sh` | PreToolUse(Write/Edit) | Blocks PEM private-key headers, AWS AKIA keys, and high-entropy secret/token assignments |
-| `prune-worktrees.sh` | SessionEnd | Reclaims feature worktrees whose work is safely merged or pushed |
-
-## Artifacts and their lanes
-
-- **`AGENTS.md`** — always-apply *invariants*. Read every time.
-- **`specs/`** — *requirements*: what to build and why. Lifecycle `Draft → Ratified → Delivered`.
-- **`plans/`** — *implementation plans*: the ordered how.
-- **`adr/`** — *architecture decisions*: the why-this-way. Lifecycle `Proposed → Accepted → Superseded`.
-
-## Version markers
-
-- **`TEMPLATE_VERSION`** — records the current template baseline (`1.0.0`). Derived repos
-  can track which version they came from; enables a future Copier/Cookiecutter migration.
-- **`CHANGELOG.md`** — conventional changelog; documents each template version's additions.
+Vidernu is a Manifest V3 Chrome extension for language learners watching foreign-language
+YouTube videos with captions on. Click "Analyze current line" and Vidernu produces a
+structured English breakdown of the active subtitle — translation, token-by-token grammar,
+tone/formality, and the grammar rules involved — generated **entirely on-device** with a
+small instruction-tuned LLM (`onnx-community/gemma-4-E2B-it-ONNX`) running locally via
+WebGPU (`@huggingface/transformers` v3). No account, no API key, no server: nothing but the
+one-time model download ever leaves your device.
 
 ## Prerequisites
 
-| Tool | Required for | Install |
-|---|---|---|
-| `just` | Quality gate (`just check`) | https://github.com/casey/just |
-| `bash` (Git Bash or WSL on Windows) | All four hooks | Included with Git for Windows / WSL |
-| `jq` | All four hooks | https://jqlang.github.io/jq/ |
+- **Node.js 22+** (CI runs on Node 22; there's no `engines` field or `.nvmrc` pinning this
+  yet, so treat it as a recommendation, not an enforced floor).
+- **A Chromium-based browser with WebGPU support** (recent Chrome/Edge on desktop). Vidernu
+  targets `https://www.youtube.com/watch*` pages only in v1.
+- **[`just`](https://github.com/casey/just)** to run the quality gate (`just check`).
+- **Network access on first run.** The first time the extension activates, it downloads the
+  pinned model's weights from Hugging Face — a multi-hundred-MB+ download (INT4/`q4f16`
+  quantized). Chrome caches the weights (Cache Storage) after that first download, so
+  subsequent sessions load the model without re-fetching it, provided the browser hasn't
+  evicted the cache.
 
-**Windows note:** the hook scripts are POSIX bash. On Windows, run them via Git Bash or
-WSL. Ensure `jq` is available on the PATH used by Claude Code.
+## Local development setup
 
-## Using this template
+```bash
+git clone <this-repo>
+cd vidernu
+npm install
+```
 
-1. Click **"Use this template"** on GitHub (or clone directly).
-2. Fill in the `justfile` recipes with your stack's real commands.
-3. Update `AGENTS.md` conventions for your project (keep each "don't" paired with a "do").
-4. Update `.github/CODEOWNERS` with your team's handles.
-5. Start a session — the `orchestrator` runs by default — and describe a change.
+There's no dev/watch script wired up yet (see `package.json`) — the workflow is
+build-then-reload:
 
-## Why `AGENTS.md` looks the way it does
+```bash
+npm run build   # runs `vite build`, emits the unpacked extension into dist/
+```
 
-`AGENTS.md` is the agent-facing counterpart to this README. Its design follows
-best-practice research on agent context files:
+Load it into Chrome:
 
-- **Short and precise.** Bloated context files reduce task success; the file is capped at
-  ~150 lines, every line earning its place.
-- **Every prohibition pairs with an alternative.** "Don't" with no "do" makes agents
-  over-cautious.
-- **Specific, and defers to tools.** Formatting/linting left to deterministic tools, not
-  the model.
-- **No stale maps.** `AGENTS.md` deliberately avoids describing repo layout — that's this
-  README's job, not AGENTS.md's.
+1. Open `chrome://extensions`.
+2. Enable **Developer mode** (top right).
+3. Click **Load unpacked** and select the `dist/` directory produced by `npm run build`.
+4. Open a YouTube watch page with captions on and click the Vidernu toolbar icon.
 
-## References
+To iterate: change source, re-run `npm run build`, then click the reload icon on Vidernu's
+card in `chrome://extensions` (or reload the extension and refresh the YouTube tab) to pick
+up the new build. There is no hot-reload/watch mode currently.
 
-- [AGENTS.md — open format](https://agents.md/)
-- [Create custom subagents (Claude Code)](https://code.claude.com/docs/en/sub-agents)
-- [A good AGENTS.md is a model upgrade (Augment Code)](https://www.augmentcode.com/blog/how-to-write-good-agents-dot-md-files)
-- [Writing a good CLAUDE.md (HumanLayer)](https://www.humanlayer.dev/blog/writing-a-good-claude-md)
-- [Best practices for Claude Code](https://code.claude.com/docs/en/best-practices)
+## Quality gate
+
+The single gate command, used by this repo, CI, and the reviewer alike:
+
+```bash
+just check
+```
+
+Per the `justfile`, this runs, in order:
+
+```
+format     → prettier --write .
+lint       → eslint . --max-warnings 0
+typecheck  → tsc --noEmit
+test       → vitest run
+build      → vite build
+```
+
+CI (`.github/workflows/ci.yml`) runs the exact same `just check` on every push/PR to `main`
+(Node 22, `npm ci`). If `just check` is green locally, CI should be green too.
+
+## Testing
+
+Run just the automated unit tests:
+
+```bash
+npm test        # vitest run
+```
+
+These are unit tests over pure modules — schema validation, caption-DOM extraction (via
+HTML fixtures), the message-type guards, and prompt construction. **What automated tests do
+not cover:** real WebGPU inference/model output quality, live YouTube DOM behavior, the
+in-page split-view layout, and Chrome toolbar badge rendering — these require a real
+browser and are not (and should not be) faked with mocks. See the **Manual QA checklist**
+in `plans/2026-07-03-vidernu-youtube-language-learning-extension.md` (under "Test
+Strategy") for the checklist to run by hand against a loaded unpacked `dist/` build before
+considering a change verified end-to-end.
+
+## Building for release
+
+Produce a production build:
+
+```bash
+npm run build   # -> dist/
+```
+
+To package it for local distribution or a Chrome Web Store upload, zip the contents of
+`dist/` (not the `dist/` folder itself):
+
+```bash
+cd dist && zip -r ../vidernu.zip . && cd ..
+```
+
+Before actually submitting anywhere, be aware of real gaps in this repo as it stands:
+
+- **No extension icon asset exists.** `src/manifest.ts` declares no `icons` field and there
+  is no icon file anywhere in the repo (`action.default_title` is set, but there's no
+  toolbar/store icon). This is a known, currently-untracked gap — add icon assets and wire
+  them into the manifest before shipping anywhere users will see a listing.
+- **Chrome Web Store review and privacy disclosure.** An extension that downloads and runs
+  a local ML model has disclosure obligations (data/permissions justification, single
+  purpose, remote code policy considerations for the downloaded model weights) that this
+  repo does not attempt to pre-fill — read the current Chrome Web Store Developer Program
+  Policies yourself before submitting; don't rely on this README for that.
+- **Permissions review.** The manifest requests only `offscreen`, `storage`, and
+  `host_permissions` for `https://www.youtube.com/*` (see `src/manifest.ts` for the
+  rationale). Re-check this list stays minimal if you add functionality.
+
+## Project structure
+
+```
+src/
+  manifest.ts   # MV3 manifest (defineManifest), permissions, entry points
+  background/   # thin service worker: offscreen lifecycle, badge state, message relay
+  content/      # content script: caption extraction, in-page panel injection
+  offscreen/    # offscreen document: owns the WebGPU model (load, inference, capability check)
+  sidepanel/    # panel UI (rendered into a shadow root injected by the content script)
+  shared/       # dependency-free modules shared across surfaces (constants, message types,
+                # prompt building, output sanitization/schema validation)
+```
+
+## Important notes for developers
+
+Two architectural decisions shape how the surfaces above talk to each other; read the ADRs
+rather than re-deriving this from the code:
+
+- **The offscreen document owns WebGPU inference; the service worker is a thin relay** — a
+  service worker has no `navigator.gpu` and is terminated aggressively when idle, neither of
+  which suits holding a multi-hundred-MB model or running long generations. See
+  [`adr/2026-07-03-offscreen-document-owns-webgpu-inference.md`](adr/2026-07-03-offscreen-document-owns-webgpu-inference.md).
+- **The panel is injected into YouTube's page DOM (resizing `#columns`), not rendered via
+  `chrome.sidePanel`** — `chrome.sidePanel` resizes the browser viewport, not YouTube's own
+  layout, which doesn't satisfy the "video stays fully visible in a resized split view"
+  requirement. There is no `sidePanel` permission or manifest key. See
+  [`adr/2026-07-03-inpage-injected-panel-resizes-youtube-columns.md`](adr/2026-07-03-inpage-injected-panel-resizes-youtube-columns.md).
+
+Also worth knowing: `src/shared/constants.ts` pins `DTYPE = "q4f16"` as the WebGPU-friendly
+INT4 variant, but the code comment flags that this exact dtype id could not be verified
+against the live Hugging Face repo in the environment it was built in — treat it as a
+documented assumption to re-verify against the live model repo, not a confirmed fact.
+
+## Further reading
+
+This repo hands off work between stages through files, not chat context. For the full
+requirements/design history behind Vidernu:
+
+- [`specs/`](specs/) — requirements: what to build and why, with acceptance criteria.
+- [`plans/`](plans/) — implementation plans: the ordered how, including the manual QA
+  checklist referenced above.
+- [`adr/`](adr/) — architecture decision records: the why-this-way for each significant
+  decision.
+
+See `AGENTS.md` for the conventions any contributor (human or agent) is expected to follow
+in this repo.
