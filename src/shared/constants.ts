@@ -36,7 +36,7 @@ export type ModelStatus = "standby" | "downloading" | "loading" | "ready" | "err
 export const BADGE_TEXT: Record<ModelStatus, string> = {
   standby: "STBY",
   downloading: "DL",
-  loading: "DL",
+  loading: "PREP",
   ready: "READY",
   error: "ERR",
 };
@@ -56,7 +56,8 @@ export const BADGE_COLOR: Record<ModelStatus, string> = {
  * wording lives in the badge title/tooltip instead (see `formatBadgeTitle`).
  */
 export function formatBadgeText(status: ModelStatus, progress?: number): string {
-  if ((status === "downloading" || status === "loading") && typeof progress === "number") {
+  // Only downloading shows a percentage; loading has its own fixed "PREP" text (FR-8/FR-15).
+  if (status === "downloading" && typeof progress === "number") {
     const clamped = Math.max(0, Math.min(100, Math.round(progress)));
     return `${clamped}%`;
   }
@@ -68,15 +69,27 @@ export function formatBadgeTitle(status: ModelStatus, progress?: number): string
   switch (status) {
     case "standby":
       return "Vidernu — standing by";
-    case "downloading":
-    case "loading": {
+    case "downloading": {
       const clamped =
         typeof progress === "number" ? Math.max(0, Math.min(100, Math.round(progress))) : 0;
       return `Vidernu — downloading model: DL: ${clamped}%`;
     }
+    // loading is the compile/prepare phase after download; distinct from "downloading %" (FR-8).
+    case "loading":
+      return "Vidernu — preparing model…";
     case "ready":
       return "Vidernu — ready, click to open the analysis panel";
     case "error":
       return "Vidernu — model error, click to open the panel for details";
   }
 }
+
+// Stall/inactivity timer: fires only when no progress has been observed for this
+// duration; distinct from TIMEOUT_MS (the per-analysis cap) (FR-10/FR-11).
+export const LOAD_STALL_TIMEOUT_MS = 120_000;
+
+export const LOAD_TIMEOUT_MESSAGE =
+  "The model load stalled and timed out. Please retry, or reload the extension.";
+
+// Generic fallback for non-Error throws where no usable message is available.
+export const MODEL_LOAD_FALLBACK_MESSAGE = "The model failed to load.";

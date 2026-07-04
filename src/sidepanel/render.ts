@@ -11,6 +11,11 @@ export interface PanelElements {
   analyzeButton: HTMLButtonElement;
   captionHint: HTMLElement;
   modelState: HTMLElement;
+  // Dedicated load-error area — shows the real error detail + hint + Retry (FR-4/FR-14).
+  loadError: HTMLElement;
+  // Explicit reference avoids brittle DOM-order querySelector("p") inside loadError.
+  loadErrorDetail: HTMLElement;
+  loadErrorRetry: HTMLButtonElement;
   fallbackBanner: HTMLElement;
   advisoryBanner: HTMLElement;
   validationNote: HTMLElement;
@@ -51,6 +56,20 @@ export function renderSkeleton(container: HTMLElement): PanelElements {
   modelState.hidden = true;
   root.appendChild(modelState);
 
+  // Dedicated load-error area — distinct from the generic modelState banner and
+  // from the analysis-result error in sections (FR-4). Hidden until an error occurs.
+  const loadError = el("div", "vidernu-load-error");
+  loadError.hidden = true;
+  const loadErrorDetail = el("p", "vidernu-load-error-detail");
+  loadError.appendChild(loadErrorDetail);
+  loadError.appendChild(
+    el("p", "vidernu-error-hint", "Try clicking Retry, or reload the extension if this persists."),
+  );
+  const loadErrorRetry = el("button", "vidernu-retry-btn", "Retry");
+  loadErrorRetry.type = "button";
+  loadError.appendChild(loadErrorRetry);
+  root.appendChild(loadError);
+
   const fallbackBanner = el("div", "vidernu-banner vidernu-banner-error");
   fallbackBanner.hidden = true;
   root.appendChild(fallbackBanner);
@@ -81,6 +100,9 @@ export function renderSkeleton(container: HTMLElement): PanelElements {
     analyzeButton,
     captionHint,
     modelState,
+    loadError,
+    loadErrorDetail,
+    loadErrorRetry,
     fallbackBanner,
     advisoryBanner,
     validationNote,
@@ -245,6 +267,21 @@ function renderGrammarSection(result: AnalysisResult): HTMLElement {
     list.appendChild(el("li", undefined, rule));
   }
   return renderSection("Grammar Notes", list);
+}
+
+/**
+ * Shows or hides the dedicated load-error area (FR-4). Pass the single-line
+ * error detail to show; pass null to hide and clear (FR-5).
+ */
+export function setLoadError(els: PanelElements, detail: string | null): void {
+  if (!detail) {
+    els.loadError.hidden = true;
+    // Reset the detail text so it cannot leak into a later error render.
+    els.loadErrorDetail.textContent = "";
+    return;
+  }
+  els.loadErrorDetail.textContent = detail;
+  els.loadError.hidden = false;
 }
 
 /** Renders the four FR-5.19 sections, degrading empty sections cleanly (FR-5.21). */

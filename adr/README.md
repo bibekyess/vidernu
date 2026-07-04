@@ -43,3 +43,5 @@ An ADR stays `Proposed` until a branch that implements it is ready to merge.
 | 2026-07-02 | Distribute as a static GitHub template with a TEMPLATE_VERSION marker | Accepted |
 | 2026-07-03 | Offscreen document owns WebGPU model inference; service worker is a thin relay | Accepted |
 | 2026-07-03 | Render Vidernu's panel by injecting into YouTube's page DOM, not via chrome.sidePanel | Accepted |
+| 2026-07-04 | Model-load stall timeout and error-detail propagation contract | Accepted |
+| 2026-07-04 | Bundle ORT runtime locally to satisfy MV3 CSP — no remote scripts | Accepted |

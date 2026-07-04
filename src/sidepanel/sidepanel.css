@@ -155,3 +155,24 @@
   font-size: 12px;
   color: #7a2f2f;
 }
+
+/* Dedicated load-error area — distinct from the analysis-result error in sections (FR-4). */
+.vidernu-load-error {
+  background: #fce8e6;
+  color: #a50e0e;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.vidernu-retry-btn {
+  margin-top: 8px;
+  background: #a50e0e;
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}

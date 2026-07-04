@@ -27,6 +27,7 @@ import {
   setAnalyzeButtonState,
   setCaptionHint,
   setFallbackBanner,
+  setLoadError,
   setModelState,
   setValidationNote,
 } from "./render";
@@ -73,6 +74,12 @@ export function mountPanel(
   const els: PanelElements = renderSkeleton(container);
   setCaptionHint(els, captureCaption().present);
 
+  // Wire the Retry button to re-trigger LOAD_MODEL from the error state (FR-14).
+  // The offscreen in-flight guard prevents duplicate loads on double-click (edge case).
+  els.loadErrorRetry.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "LOAD_MODEL" } satisfies Message);
+  });
+
   let latestRequestId = 0;
   let pendingLang: string | undefined;
   let webgpuAvailable = true;
@@ -95,6 +102,10 @@ export function mountPanel(
     progress?: number;
     webgpu: boolean;
     lowPowerHint?: boolean;
+    message?: string;
+    // When true, skip updating the load-error area so a capability-only update
+    // does not wipe the visible error detail while the status is still "error".
+    preserveLoadError?: boolean;
   }): void {
     webgpuAvailable = state.webgpu;
     modelStatus = state.modelStatus;
@@ -110,11 +121,24 @@ export function mountPanel(
         : null,
     );
     setModelState(els, describeModelState(state.modelStatus, state.progress));
+
+    // Render the dedicated load-error area on error, clear it on any other status (FR-4/FR-5).
+    // Skip when the caller signals that the load-error should be left untouched (e.g. a
+    // capability-only update that carries no new status and no new error detail).
+    if (!state.preserveLoadError) {
+      if (state.modelStatus === "error") {
+        setLoadError(els, state.message ?? "");
+      } else {
+        setLoadError(els, null);
+      }
+    }
+
     refreshButtonState();
   }
 
   const onMessage = (message: unknown): void => {
     if (isStateSnapshot(message)) {
+      // StateSnapshot now carries the optional error message (Step 2 / FR-3).
       applyState(message);
       return;
     }
@@ -123,6 +147,7 @@ export function mountPanel(
         modelStatus: message.status,
         progress: message.progress,
         webgpu: webgpuAvailable,
+        message: message.message,
       });
       return;
     }
@@ -131,6 +156,9 @@ export function mountPanel(
         modelStatus,
         webgpu: message.webgpu,
         lowPowerHint: message.lowPowerHint,
+        // A capability update carries no status change and no error detail — leave the
+        // load-error area exactly as-is so an existing error stays visible (P3 fix).
+        preserveLoadError: true,
       });
       return;
     }
