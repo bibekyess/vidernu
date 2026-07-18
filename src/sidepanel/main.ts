@@ -327,6 +327,12 @@ export function mountPanel(
     });
   }
 
+  // Paint the initial "ready to analyze" state (FR-E4). Without this call the
+  // tab strip renders with no labels/aria state and the tab panel is empty
+  // until the first state-changing action — `renderSkeleton` only builds the
+  // bare DOM shape, it never labels/selects the tabs itself.
+  render();
+
   return {
     updateCaptionHint(present: boolean): void {
       setCaptionHint(els, present);

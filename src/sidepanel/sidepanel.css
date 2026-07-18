@@ -126,8 +126,13 @@
 }
 
 /* Stop control (FR-C1/E2) — red/orange, never teal; visible only while its
-   phase is generating. */
-.vidernu-stop-btn {
+   phase is generating. The `:not([hidden])` guard matters: an unconditional
+   `display` here would win the cascade over the UA `[hidden] { display:
+   none }` rule (author styles outrank user-agent styles at equal
+   specificity), making the button visible even while `stopButton.hidden` is
+   true — verified against real Chromium, not just jsdom, which does not
+   reproduce this cascade behavior. */
+.vidernu-stop-btn:not([hidden]) {
   display: inline-flex;
   align-items: center;
   gap: 6px;

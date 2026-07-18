@@ -147,6 +147,37 @@ describe("mountPanel: two-phase analysis flow (FR-A/C/D)", () => {
     (container.querySelector(".vidernu-analyze-btn") as HTMLButtonElement).click();
   }
 
+  it("paints the idle 'ready to analyze' state immediately on mount, before any action", () => {
+    // Regression test: mountPanel used to never call render() until the first
+    // state-changing event, so the tab strip had no labels/aria state and the
+    // tab panel was empty right after the panel was injected — a real-DOM-only
+    // bug (jsdom's `.hidden` assertions never caught it; confirmed broken via
+    // a Playwright/Chromium load of the built extension).
+    const handle = mountPanel(shadow, container, () => ({ present: true, text: "hello" }));
+
+    const translationTab = container.querySelector("#vidernu-tab-translation") as HTMLButtonElement;
+    expect(translationTab.textContent).toContain("Translation");
+    expect(translationTab.getAttribute("aria-selected")).toBe("true");
+
+    const deconstructionTab = container.querySelector(
+      "#vidernu-tab-deconstruction",
+    ) as HTMLButtonElement;
+    expect(deconstructionTab.textContent).toContain("Deconstruction");
+    expect(deconstructionTab.getAttribute("aria-disabled")).toBe("true");
+
+    const tabPanel = container.querySelector("#vidernu-tabpanel") as HTMLElement;
+    expect(tabPanel.textContent).toContain("Click");
+
+    const stopButton = container.querySelector(".vidernu-stop-btn") as HTMLButtonElement;
+    expect(stopButton.hidden).toBe(true);
+    const detailTrigger = container.querySelector(
+      ".vidernu-detail-trigger-btn",
+    ) as HTMLButtonElement;
+    expect(detailTrigger.hidden).toBe(true);
+
+    handle.destroy();
+  });
+
   function lastAnalyzeRequestId(phase: "quick" | "detail"): number {
     const calls = chrome.sendMessage.mock.calls
       .map((c) => c[0] as Record<string, unknown>)
