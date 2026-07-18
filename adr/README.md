@@ -45,3 +45,5 @@ An ADR stays `Proposed` until a branch that implements it is ready to merge.
 | 2026-07-03 | Render Vidernu's panel by injecting into YouTube's page DOM, not via chrome.sidePanel | Accepted |
 | 2026-07-04 | Model-load stall timeout and error-detail propagation contract | Accepted |
 | 2026-07-04 | Bundle ORT runtime locally to satisfy MV3 CSP — no remote scripts | Accepted |
+| 2026-07-04 | Split the single combined inference contract into two independent phase contracts | Accepted |
+| 2026-07-04 | User-initiated Stop reuses cooperative supersession, not a hard GPU abort | Accepted |

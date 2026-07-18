@@ -7,13 +7,20 @@ import { LOAD_STALL_TIMEOUT_MS, LOAD_TIMEOUT_MESSAGE, TIMEOUT_MS } from "../shar
 
 const LOG_ANALYSIS = "[Vidernu][analysis]";
 import {
+  type AnalysisPhase,
   type CapabilityMsg,
   isLoadModel,
   isRunInference,
+  isStopInference,
   type InferenceResult,
   type ModelStatusMsg,
 } from "../shared/messages";
-import { type AnalysisError, type AnalysisResult, makeAnalysisError } from "../shared/schema";
+import {
+  type AnalysisError,
+  type DetailResult,
+  type QuickResult,
+  makeAnalysisError,
+} from "../shared/schema";
 import { detectWebGPU } from "./capability";
 import { runInference } from "./inference";
 import { deriveErrorMessage, loadModel, resetPipeline } from "./model";
@@ -22,6 +29,14 @@ import { deriveErrorMessage, loadModel, resetPipeline } from "./model";
 // RUN_INFERENCE bumps this, marking any older in-flight generation
 // superseded (FR-17 latest-wins).
 let currentRequestId = 0;
+
+// The requestId explicitly cancelled by a user-initiated Stop (FR-C, see
+// adr/2026-07-04-user-initiated-cooperative-stop.md). Widens `isSuperseded`
+// so the same InterruptableStoppingCriteria poll that already implements
+// latest-wins also implements Stop. Reset to null at the start of every new
+// handleRunInference so a stale cancel can never suppress a later
+// legitimate result.
+let cancelledRequestId: number | null = null;
 
 function post(message: ModelStatusMsg | CapabilityMsg | InferenceResult): void {
   chrome.runtime.sendMessage(message).catch(() => {
@@ -116,21 +131,29 @@ async function handleLoadModel(): Promise<void> {
   }
 }
 
-async function handleRunInference(requestId: number, text: string, lang?: string): Promise<void> {
+async function handleRunInference(
+  requestId: number,
+  phase: AnalysisPhase,
+  text: string,
+  lang?: string,
+): Promise<void> {
   currentRequestId = requestId;
+  // A stale cancel from a prior request must never suppress this new one.
+  if (cancelledRequestId === requestId) cancelledRequestId = null;
   let timedOut = false;
-  const isSuperseded = (): boolean => currentRequestId !== requestId || timedOut;
+  const isSuperseded = (): boolean =>
+    currentRequestId !== requestId || timedOut || cancelledRequestId === requestId;
 
   // Log when an analysis request arrives so the flow is visible even if
   // inference never reaches runInference (e.g. it times out first).
   console.log(
     LOG_ANALYSIS,
-    `request ${requestId} received — text: "${text}", lang: ${lang ?? "none"}, timeout: ${TIMEOUT_MS}ms`,
+    `request ${requestId} (${phase}) received — text: "${text}", lang: ${lang ?? "none"}, timeout: ${TIMEOUT_MS}ms`,
   );
 
   const startMs = Date.now();
-  const result = await raceTimeout<AnalysisResult | AnalysisError>(
-    runInference(text, lang, isSuperseded),
+  const result = await raceTimeout<QuickResult | DetailResult | AnalysisError>(
+    runInference(text, lang, phase, isSuperseded),
     TIMEOUT_MS,
     () => {
       const elapsedMs = Date.now() - startMs;
@@ -138,23 +161,39 @@ async function handleRunInference(requestId: number, text: string, lang?: string
       // cancellation inside runInference so the console makes the cause clear.
       console.warn(
         LOG_ANALYSIS,
-        `request ${requestId} TIMED OUT after ${elapsedMs}ms (cap: ${TIMEOUT_MS}ms)`,
+        `request ${requestId} (${phase}) TIMED OUT after ${elapsedMs}ms (cap: ${TIMEOUT_MS}ms)`,
       );
       timedOut = true;
       return makeAnalysisError();
     },
   );
 
-  if (currentRequestId !== requestId) {
-    // A newer request has already won; still notify the service worker (with
-    // `superseded: true`) so it drops this request's `pendingAnalyses` entry
-    // instead of it accumulating there for the rest of the session.
-    console.log(LOG_ANALYSIS, `request ${requestId} superseded — posting with superseded:true`);
-    post({ type: "INFERENCE_RESULT", requestId, result, superseded: true });
+  if (currentRequestId !== requestId || cancelledRequestId === requestId) {
+    // A newer request has already won, or this one was explicitly stopped;
+    // still notify the service worker (with `superseded: true`) so it drops
+    // this request's `pendingAnalyses` entry instead of it accumulating
+    // there for the rest of the session, and so the stopped output never
+    // surfaces in the panel (FR-C5).
+    console.log(
+      LOG_ANALYSIS,
+      `request ${requestId} (${phase}) superseded/cancelled — posting with superseded:true`,
+    );
+    post({ type: "INFERENCE_RESULT", requestId, phase, result, superseded: true });
     return;
   }
-  console.log(LOG_ANALYSIS, `request ${requestId} complete — posting result`, result);
-  post({ type: "INFERENCE_RESULT", requestId, result });
+  console.log(LOG_ANALYSIS, `request ${requestId} (${phase}) complete — posting result`, result);
+  post({ type: "INFERENCE_RESULT", requestId, phase, result });
+}
+
+/**
+ * Handles a user-initiated Stop (FR-C). Only cancels the currently in-flight
+ * request; a stale/late STOP_INFERENCE for a non-current id is a no-op
+ * (edge case: stop pressed after the generation already completed).
+ */
+function handleStopInference(requestId: number): void {
+  if (requestId === currentRequestId) {
+    cancelledRequestId = requestId;
+  }
 }
 
 /** Bounds an analysis attempt by a timeout (FR-7.29) without leaving a dangling timer. */
@@ -179,6 +218,10 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
     return;
   }
   if (isRunInference(message)) {
-    void handleRunInference(message.requestId, message.text, message.lang);
+    void handleRunInference(message.requestId, message.phase, message.text, message.lang);
+    return;
+  }
+  if (isStopInference(message)) {
+    handleStopInference(message.requestId);
   }
 });

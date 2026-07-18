@@ -99,12 +99,21 @@ describe("service-worker: pendingAnalyses cleanup on INFERENCE_RESULT", () => {
     const sendResponse = vi.fn();
     const sender = { tab: { id: 42 } } as chrome.runtime.MessageSender;
 
-    onMessage({ type: "ANALYZE_REQUEST", requestId: 1, text: "hola" }, sender, sendResponse);
+    onMessage(
+      { type: "ANALYZE_REQUEST", requestId: 1, phase: "quick", text: "hola" },
+      sender,
+      sendResponse,
+    );
     await Promise.resolve();
     await Promise.resolve();
 
     onMessage(
-      { type: "INFERENCE_RESULT", requestId: 1, result: { error: true, message: "x" } },
+      {
+        type: "INFERENCE_RESULT",
+        requestId: 1,
+        phase: "quick",
+        result: { error: true, message: "x" },
+      },
       {} as chrome.runtime.MessageSender,
       sendResponse,
     );
@@ -112,6 +121,7 @@ describe("service-worker: pendingAnalyses cleanup on INFERENCE_RESULT", () => {
     expect(sendMessageToTab).toHaveBeenCalledWith(42, {
       type: "ANALYSIS_RESULT",
       requestId: 1,
+      phase: "quick",
       analyzedLine: "hola",
       result: { error: true, message: "x" },
     });
@@ -124,8 +134,16 @@ describe("service-worker: pendingAnalyses cleanup on INFERENCE_RESULT", () => {
     const sendResponse = vi.fn();
     const sender = { tab: { id: 7 } } as chrome.runtime.MessageSender;
 
-    onMessage({ type: "ANALYZE_REQUEST", requestId: 1, text: "old line" }, sender, sendResponse);
-    onMessage({ type: "ANALYZE_REQUEST", requestId: 2, text: "new line" }, sender, sendResponse);
+    onMessage(
+      { type: "ANALYZE_REQUEST", requestId: 1, phase: "quick", text: "old line" },
+      sender,
+      sendResponse,
+    );
+    onMessage(
+      { type: "ANALYZE_REQUEST", requestId: 2, phase: "quick", text: "new line" },
+      sender,
+      sendResponse,
+    );
     await Promise.resolve();
     await Promise.resolve();
 
@@ -137,6 +155,7 @@ describe("service-worker: pendingAnalyses cleanup on INFERENCE_RESULT", () => {
       {
         type: "INFERENCE_RESULT",
         requestId: 1,
+        phase: "quick",
         result: { error: true, message: "x" },
         superseded: true,
       },
@@ -149,7 +168,12 @@ describe("service-worker: pendingAnalyses cleanup on INFERENCE_RESULT", () => {
     // requestId 1 (what a leaked, un-cleaned-up entry would still answer to)
     // finds nothing pending and is not relayed either.
     onMessage(
-      { type: "INFERENCE_RESULT", requestId: 1, result: { error: true, message: "y" } },
+      {
+        type: "INFERENCE_RESULT",
+        requestId: 1,
+        phase: "quick",
+        result: { error: true, message: "y" },
+      },
       {} as chrome.runtime.MessageSender,
       sendResponse,
     );
@@ -157,16 +181,136 @@ describe("service-worker: pendingAnalyses cleanup on INFERENCE_RESULT", () => {
 
     // The winning request (2) still relays normally.
     onMessage(
-      { type: "INFERENCE_RESULT", requestId: 2, result: { error: true, message: "z" } },
+      {
+        type: "INFERENCE_RESULT",
+        requestId: 2,
+        phase: "quick",
+        result: { error: true, message: "z" },
+      },
       {} as chrome.runtime.MessageSender,
       sendResponse,
     );
     expect(sendMessageToTab).toHaveBeenCalledWith(7, {
       type: "ANALYSIS_RESULT",
       requestId: 2,
+      phase: "quick",
       analyzedLine: "new line",
       result: { error: true, message: "z" },
     });
+  });
+});
+
+describe("service-worker: phase relay and STOP_ANALYSIS (FR-A8, FR-C, FR-D)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+  });
+
+  it("relays RUN_INFERENCE with phase:'detail' and sets a pending entry", async () => {
+    const { sendMessageRuntime, getListener } = installChromeMock();
+    await import("../src/background/service-worker");
+    const onMessage = getListener();
+    const sendResponse = vi.fn();
+    const sender = { tab: { id: 3 } } as chrome.runtime.MessageSender;
+
+    onMessage(
+      { type: "ANALYZE_REQUEST", requestId: 10, phase: "detail", text: "line" },
+      sender,
+      sendResponse,
+    );
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(sendMessageRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "RUN_INFERENCE",
+        requestId: 10,
+        phase: "detail",
+        text: "line",
+      }),
+    );
+  });
+
+  it("relays STOP_ANALYSIS as STOP_INFERENCE with the same requestId", async () => {
+    const { sendMessageRuntime, getListener } = installChromeMock();
+    await import("../src/background/service-worker");
+    const onMessage = getListener();
+    const sendResponse = vi.fn();
+
+    onMessage(
+      { type: "STOP_ANALYSIS", requestId: 4, phase: "detail" },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+    await Promise.resolve();
+
+    expect(sendMessageRuntime).toHaveBeenCalledWith({ type: "STOP_INFERENCE", requestId: 4 });
+  });
+
+  it("STOP_ANALYSIS drops the pendingAnalyses entry so a later INFERENCE_RESULT for it is not relayed", async () => {
+    const { sendMessageToTab, getListener } = installChromeMock();
+    await import("../src/background/service-worker");
+    const onMessage = getListener();
+    const sendResponse = vi.fn();
+    const sender = { tab: { id: 8 } } as chrome.runtime.MessageSender;
+
+    onMessage(
+      { type: "ANALYZE_REQUEST", requestId: 20, phase: "quick", text: "line" },
+      sender,
+      sendResponse,
+    );
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    onMessage(
+      { type: "STOP_ANALYSIS", requestId: 20, phase: "quick" },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+
+    onMessage(
+      {
+        type: "INFERENCE_RESULT",
+        requestId: 20,
+        phase: "quick",
+        result: { error: true, message: "stopped" },
+        superseded: true,
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+
+    expect(sendMessageToTab).not.toHaveBeenCalled();
+  });
+
+  it("ANALYSIS_RESULT carries the phase from the winning INFERENCE_RESULT", async () => {
+    const { sendMessageToTab, getListener } = installChromeMock();
+    await import("../src/background/service-worker");
+    const onMessage = getListener();
+    const sendResponse = vi.fn();
+    const sender = { tab: { id: 5 } } as chrome.runtime.MessageSender;
+
+    onMessage(
+      { type: "ANALYZE_REQUEST", requestId: 30, phase: "detail", text: "line" },
+      sender,
+      sendResponse,
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    onMessage(
+      {
+        type: "INFERENCE_RESULT",
+        requestId: 30,
+        phase: "detail",
+        result: { deconstruction: [], context: "", grammar_rules: [] },
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse,
+    );
+
+    expect(sendMessageToTab).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ type: "ANALYSIS_RESULT", requestId: 30, phase: "detail" }),
+    );
   });
 });
 
@@ -319,7 +463,11 @@ describe("service-worker: lazy re-init on analysis when not ready (Section E —
     const sender = { tab: { id: 99 } } as chrome.runtime.MessageSender;
 
     // Default state is standby (not ready) — trigger an analysis request.
-    onMessage({ type: "ANALYZE_REQUEST", requestId: 1, text: "hello" }, sender, sendResponse);
+    onMessage(
+      { type: "ANALYZE_REQUEST", requestId: 1, phase: "quick", text: "hello" },
+      sender,
+      sendResponse,
+    );
     // Flush: the async IIFE awaits ensureOffscreenDocument (getContexts) before the LOAD_MODEL send.
     for (let i = 0; i < 10; i++) await Promise.resolve();
 

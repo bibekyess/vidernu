@@ -83,7 +83,10 @@ in-page split-view layout, and Chrome toolbar badge rendering — these require 
 browser and are not (and should not be) faked with mocks. See the **Manual QA checklist**
 in `plans/2026-07-03-vidernu-youtube-language-learning-extension.md` (under "Test
 Strategy") for the checklist to run by hand against a loaded unpacked `dist/` build before
-considering a change verified end-to-end.
+considering a change verified end-to-end. Items 9–16 of that checklist were superseded by the
+two-phase/stop/retry/UX-polish work in
+`plans/2026-07-04-two-phase-analysis-stop-retry-polish.md` (see its own "Manual QA checklist
+changes" section for the same list in context).
 
 ## Building for release
 

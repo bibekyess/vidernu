@@ -10,6 +10,7 @@ import {
   isGetState,
   isInferenceResult,
   isModelStatusMsg,
+  isStopAnalysis,
   type Message,
   type ModelStatusValue,
   type StateSnapshot,
@@ -114,7 +115,8 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       await ensureOffscreenDocument();
       // Lazy re-init: if the model is not ready when analysis is requested,
       // trigger a (re-)load so the user gets progress rather than being left
-      // stranded at a stale non-ready status (FR-21).
+      // stranded at a stale non-ready status (FR-21). Both phases and any
+      // retry flow through this one branch, so they all inherit this.
       if (currentState.modelStatus !== "ready") {
         chrome.runtime.sendMessage({ type: "LOAD_MODEL" } satisfies Message).catch(() => {});
       }
@@ -122,6 +124,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
         .sendMessage({
           type: "RUN_INFERENCE",
           requestId: message.requestId,
+          phase: message.phase,
           text: message.text,
           lang: message.lang,
         } satisfies Message)
@@ -131,6 +134,21 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
           // timeout expectation is bounded by the offscreen-side FR-29 timer.
         });
     })();
+    return false;
+  }
+
+  if (isStopAnalysis(message)) {
+    // Relay as a user-initiated cancel (FR-C, see
+    // adr/2026-07-04-user-initiated-cooperative-stop.md). Eagerly drop the
+    // pending entry — the offscreen document's superseded INFERENCE_RESULT
+    // would also clean it up, but there is no reason to wait for that race.
+    pendingAnalyses.delete(message.requestId);
+    chrome.runtime
+      .sendMessage({ type: "STOP_INFERENCE", requestId: message.requestId } satisfies Message)
+      .catch(() => {
+        // No offscreen listener (e.g. it was never created) — nothing was
+        // running to stop; not an error worth surfacing.
+      });
     return false;
   }
 
@@ -162,6 +180,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     send(pending.tabId, {
       type: "ANALYSIS_RESULT",
       requestId: message.requestId,
+      phase: message.phase,
       analyzedLine: pending.analyzedLine,
       result: message.result,
     });

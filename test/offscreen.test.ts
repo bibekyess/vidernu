@@ -86,10 +86,10 @@ describe("offscreen: superseded RUN_INFERENCE requests (FR-17 latest-wins)", () 
     await import("../src/offscreen/offscreen");
     const onMessage = getListener();
 
-    onMessage({ type: "RUN_INFERENCE", requestId: 1, text: "first line" });
+    onMessage({ type: "RUN_INFERENCE", requestId: 1, phase: "quick", text: "first line" });
     await Promise.resolve();
 
-    onMessage({ type: "RUN_INFERENCE", requestId: 2, text: "second line" });
+    onMessage({ type: "RUN_INFERENCE", requestId: 2, phase: "quick", text: "second line" });
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -98,6 +98,7 @@ describe("offscreen: superseded RUN_INFERENCE requests (FR-17 latest-wins)", () 
     expect(sendMessage).toHaveBeenCalledWith({
       type: "INFERENCE_RESULT",
       requestId: 2,
+      phase: "quick",
       result: { error: true, message: "second" },
     });
 
@@ -113,8 +114,192 @@ describe("offscreen: superseded RUN_INFERENCE requests (FR-17 latest-wins)", () 
     expect(sendMessage).toHaveBeenCalledWith({
       type: "INFERENCE_RESULT",
       requestId: 1,
+      phase: "quick",
       result: { error: true, message: "first" },
       superseded: true,
+    });
+  });
+});
+
+describe("offscreen: phase routing (FR-B1)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+    runInferenceMock.mockReset();
+    detectWebGPUMock.mockReset();
+    loadModelMock.mockReset();
+    resetPipelineMock.mockReset();
+  });
+
+  it("passes phase through to runInference for quick and detail requests", async () => {
+    const { getListener } = installChromeMock();
+    runInferenceMock.mockResolvedValue({ translation: { literal: "l", natural: "n" } });
+
+    await import("../src/offscreen/offscreen");
+    const onMessage = getListener();
+
+    onMessage({ type: "RUN_INFERENCE", requestId: 1, phase: "quick", text: "line", lang: "ko" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(runInferenceMock).toHaveBeenCalledWith("line", "ko", "quick", expect.any(Function));
+
+    onMessage({ type: "RUN_INFERENCE", requestId: 2, phase: "detail", text: "line2", lang: "ko" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(runInferenceMock).toHaveBeenCalledWith("line2", "ko", "detail", expect.any(Function));
+  });
+
+  it("posts the result with the same phase it was requested with", async () => {
+    const { sendMessage, getListener } = installChromeMock();
+    runInferenceMock.mockResolvedValue({ deconstruction: [], context: "", grammar_rules: [] });
+
+    await import("../src/offscreen/offscreen");
+    const onMessage = getListener();
+
+    onMessage({ type: "RUN_INFERENCE", requestId: 5, phase: "detail", text: "line" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "INFERENCE_RESULT", requestId: 5, phase: "detail" }),
+    );
+  });
+});
+
+describe("offscreen: STOP_INFERENCE cancel marker (FR-C)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+    runInferenceMock.mockReset();
+    detectWebGPUMock.mockReset();
+    loadModelMock.mockReset();
+    resetPipelineMock.mockReset();
+  });
+
+  it("STOP_INFERENCE for the in-flight id flips isSuperseded so the result posts with superseded:true", async () => {
+    const { sendMessage, getListener } = installChromeMock();
+
+    let capturedIsSuperseded: (() => boolean) | undefined;
+    const pending = deferred<{ error: true; message: string }>();
+    runInferenceMock.mockImplementationOnce((...args: unknown[]) => {
+      capturedIsSuperseded = args[3] as () => boolean;
+      return pending.promise;
+    });
+
+    await import("../src/offscreen/offscreen");
+    const onMessage = getListener();
+
+    onMessage({ type: "RUN_INFERENCE", requestId: 1, phase: "quick", text: "line" });
+    await Promise.resolve();
+
+    expect(capturedIsSuperseded?.()).toBe(false);
+
+    onMessage({ type: "STOP_INFERENCE", requestId: 1 });
+
+    expect(capturedIsSuperseded?.()).toBe(true);
+
+    pending.resolve({ error: true, message: "stopped" });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: "INFERENCE_RESULT",
+      requestId: 1,
+      phase: "quick",
+      result: { error: true, message: "stopped" },
+      superseded: true,
+    });
+  });
+
+  it("STOP_INFERENCE for a non-current id is a no-op", async () => {
+    const { sendMessage, getListener } = installChromeMock();
+
+    let capturedIsSuperseded: (() => boolean) | undefined;
+    const pending = deferred<{ error: true; message: string }>();
+    runInferenceMock.mockImplementationOnce((...args: unknown[]) => {
+      capturedIsSuperseded = args[3] as () => boolean;
+      return pending.promise;
+    });
+
+    await import("../src/offscreen/offscreen");
+    const onMessage = getListener();
+
+    onMessage({ type: "RUN_INFERENCE", requestId: 1, phase: "quick", text: "line" });
+    await Promise.resolve();
+
+    // Stop a stale id that is not the in-flight one.
+    onMessage({ type: "STOP_INFERENCE", requestId: 999 });
+    expect(capturedIsSuperseded?.()).toBe(false);
+
+    pending.resolve({ error: true, message: "ok" });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: "INFERENCE_RESULT",
+      requestId: 1,
+      phase: "quick",
+      result: { error: true, message: "ok" },
+    });
+  });
+
+  it("resets a stale cancelledRequestId so it never suppresses a later request reusing the same id", async () => {
+    // Defensive coverage for the reset in handleRunInference: even if a
+    // requestId were ever reused (the real counter is monotonic, but the
+    // module must not silently rely on that for correctness), a cancel
+    // stamped on a since-completed request must not leak into a brand-new
+    // request that happens to reuse the same id.
+    const { sendMessage, getListener } = installChromeMock();
+
+    let firstIsSuperseded: (() => boolean) | undefined;
+    const firstPending = deferred<{ error: true; message: string }>();
+    runInferenceMock.mockImplementationOnce((...args: unknown[]) => {
+      firstIsSuperseded = args[3] as () => boolean;
+      return firstPending.promise;
+    });
+    let secondIsSuperseded: (() => boolean) | undefined;
+    const secondPending = deferred<{ error: true; message: string }>();
+    runInferenceMock.mockImplementationOnce((...args: unknown[]) => {
+      secondIsSuperseded = args[3] as () => boolean;
+      return secondPending.promise;
+    });
+
+    await import("../src/offscreen/offscreen");
+    const onMessage = getListener();
+
+    onMessage({ type: "RUN_INFERENCE", requestId: 1, phase: "quick", text: "line" });
+    await Promise.resolve();
+
+    onMessage({ type: "STOP_INFERENCE", requestId: 1 });
+    expect(firstIsSuperseded?.()).toBe(true);
+
+    firstPending.resolve({ error: true, message: "stopped" });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A new request reuses id 1. The reset at the top of handleRunInference
+    // must clear the stale cancel so this legitimate request is not
+    // immediately treated as cancelled.
+    onMessage({ type: "RUN_INFERENCE", requestId: 1, phase: "quick", text: "line2" });
+    await Promise.resolve();
+
+    expect(secondIsSuperseded?.()).toBe(false);
+
+    secondPending.resolve({ error: true, message: "second" });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: "INFERENCE_RESULT",
+      requestId: 1,
+      phase: "quick",
+      result: { error: true, message: "second" },
     });
   });
 });
